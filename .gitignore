@@ -1,0 +1,21 @@
+### Config files
+conf/*.local.*
+
+### Python
+*.log
+*.pot
+*.pyc
+__pycache__/
+venv*/
+
+### IDEs and temporary files
+.idea
+.swp
+*~
+*.tmp
+
+### OS-specific
+.directory
+desktop.ini
+Thumbs.db
+.DS_Store

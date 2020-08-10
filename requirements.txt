@@ -1,0 +1,7 @@
+boto3
+chardet
+click
+elasticsearch
+elasticsearch-dsl
+pyspark>=3.0.0
+warcio
