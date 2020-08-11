@@ -6,8 +6,9 @@ import click
 import chardet
 import elasticsearch_dsl as edsl
 from elasticsearch_dsl import connections
-from elasticsearch.helpers import bulk
+from elasticsearch.helpers import streaming_bulk
 from warcio.archiveiterator import ArchiveIterator
+from warcio.recordloader import ArcWarcRecord
 
 from functools import partial
 import logging
@@ -39,7 +40,8 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix):
     (sc.parallelize(o.key for o in s3.Bucket(s3_bucket).objects.all())
        .flatMap(partial(parse_warc, bucket=s3_bucket))
        .map(partial(parse_record, doc_id_prefix=doc_id_prefix, discard_content=True))
-       .mapPartitions(partial(index_data, meta_index=meta_index, content_index=None))
+       .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None))
+       .mapPartitions(index_bulk)
        .count())
 
 
@@ -83,7 +85,15 @@ def parse_warc(obj_name, bucket):
     for record in iterator:
         if record.rec_type != 'response':
             continue
-        yield obj_name, iterator.offset, record
+
+        # Create copy without unpicklable BytesIO stream
+        record_copy = ArcWarcRecord(
+            record.format, record.rec_type, record.rec_headers, None,
+            record.http_headers, record.content_type, record.length
+        )
+        record_copy.content = record.content_stream().read()
+
+        yield obj_name, iterator.offset, record_copy
 
 
 @with_config
@@ -98,7 +108,7 @@ def parse_record(warc_triple, doc_id_prefix, discard_content=False):
     """
     warc_file, warc_offset, warc_record = warc_triple
 
-    content = warc_record.content_stream().read()
+    content = warc_record.content
     content_len = len(content)
 
     # Try to detect content encoding
@@ -128,28 +138,28 @@ def parse_record(warc_triple, doc_id_prefix, discard_content=False):
 
 
 @with_config
-def index_data(data_partition, meta_index, content_index):
+def create_index_actions(data_tuple, meta_index, content_index):
+    doc_id, meta, content = data_tuple
+    if meta:
+        yield {
+            '_op_type': 'index',
+            '_index': meta_index,
+            '_id': doc_id,
+            **meta
+        }
+    if content:
+        yield {
+            '_op_type': 'index',
+            '_index': content_index,
+            '_id': doc_id,
+            **content
+        }
+
+
+@with_config
+def index_bulk(actions_partition):
     lib.init_es_connection()
-
-    def index_gen():
-        for doc_id, meta, content in data_partition:
-            if meta:
-                yield {
-                    '_op_type': 'index',
-                    '_index': meta_index,
-                    '_id': doc_id,
-                    **meta
-                }
-            if content:
-                yield {
-                    '_op_type': 'index',
-                    '_index': content_index,
-                    '_id': doc_id,
-                    **content
-                }
-
-    bulk(edsl.connections.get_connection(), index_gen())
-    return []
+    yield from streaming_bulk(edsl.connections.get_connection(), actions_partition)
 
 
 if __name__ == '__main__':
