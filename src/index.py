@@ -40,7 +40,7 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix):
        .flatMap(partial(parse_warc, bucket=s3_bucket))
        .map(partial(parse_record, doc_id_prefix=doc_id_prefix, discard_content=True))
        .mapPartitions(partial(index_data, meta_index=meta_index, content_index=None))
-       .take(10))
+       .count())
 
 
 def with_config(func):
@@ -99,6 +99,7 @@ def parse_record(warc_triple, doc_id_prefix, discard_content=False):
     warc_file, warc_offset, warc_record = warc_triple
 
     content = warc_record.content_stream().read()
+    content_len = len(content)
 
     # Try to detect content encoding
     content_type = warc_record.http_headers.get_header('Content-Type', '').split(';')[0].strip()
@@ -115,8 +116,9 @@ def parse_record(warc_triple, doc_id_prefix, discard_content=False):
     meta = {
         'warc_file': warc_file,
         'warc_offset': warc_offset,
-        'content_length': int(warc_record.rec_headers.get_header('Content-Length')),
-        'content_type': warc_record.rec_headers.get_header('Content-Type'),
+        'content_length': content_len,
+        'content_type': content_type,
+        'http_length': int(warc_record.rec_headers.get_header('Content-Length')),
         'content_encoding': encoding.lower() if encoding is not None else None,
         **{h.replace('-', '_').lower(): v for h, v in warc_record.rec_headers.headers if h.startswith('WARC-')}
     }
