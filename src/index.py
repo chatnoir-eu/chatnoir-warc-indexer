@@ -32,7 +32,6 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix):
     """
     Index offsets of WARC documents into Elasticsearch.
     """
-
     setup_metadata_index(meta_index)
 
     sc = lib.get_spark_context()
