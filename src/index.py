@@ -63,6 +63,7 @@ def setup_metadata_index(index_name):
         content_length = edsl.Long()
         content_type = edsl.Keyword()
         content_encoding = edsl.Keyword()
+        http_length = edsl.Long()
         warc_type = edsl.Keyword()
         warc_date = edsl.Date(format='date_time_no_millis')
         warc_record_id = edsl.Keyword()
