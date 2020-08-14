@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 
-import lib
+import logging
+from functools import partial
 
-import click
 import chardet
+import click
 import elasticsearch_dsl as edsl
-from elasticsearch_dsl import connections
 from elasticsearch.helpers import streaming_bulk
+from elasticsearch_dsl import connections
 from warcio.archiveiterator import ArchiveIterator
 from warcio.recordloader import ArcWarcRecord
 
-from functools import partial
-import logging
-
+import lib
 
 logger = logging.getLogger()
 

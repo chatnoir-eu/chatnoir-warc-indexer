@@ -1,12 +1,11 @@
-import boto3
-from elasticsearch_dsl import connections
-from pyspark import SparkConf, SparkContext
-
-from functools import partial
-from glob import glob
 import json
 import os
 import uuid
+from glob import glob
+
+import boto3
+from elasticsearch_dsl import connections
+from pyspark import SparkConf, SparkContext
 
 _CONFIG_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', 'conf'))
 _CONFIG = {}
