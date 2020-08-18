@@ -62,13 +62,8 @@ def get_spark_context() -> SparkContext:
     """
     :return: new configured Spark context
     """
-    if 'SPARK_HOME' not in os.environ:
-        raise RuntimeError('SPARK_HOME is not set!')
-
     conf = SparkConf().setAppName('ChatNoir WARC Indexer').setAll(get_config()["spark"].items())
     sc = SparkContext(conf=conf)
-    for py in glob(os.path.join(os.path.dirname(__file__), '*.py')):
-        sc.addPyFile(py)
     return sc
 
 
