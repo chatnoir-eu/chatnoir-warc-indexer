@@ -41,6 +41,7 @@ def repack_clueweb_warcs(s3_in_bucket, s3_out_bucket, filter):
 
     (sc
      .parallelize(o.key for o in s3.Bucket(s3_in_bucket).objects.filter(Prefix=filter))
+     .repartition(sc.defaultParallelism)
      .foreach(partial(repack_warc, in_bucket=s3_in_bucket, out_bucket=s3_out_bucket)))
 
 
@@ -99,6 +100,7 @@ def repack_warc(obj_name, in_bucket, out_bucket):
             if not after_record:
                 write_warc_record(warc_writer, rec_headers, rec_content)
 
+            tmp_file.flush()
             tmp_file.seek(0)
             s3.Object(out_bucket, obj_name).put(Body=tmp_file)
             logger.info('Converted WARC {}'.format(obj_name))
@@ -127,11 +129,13 @@ def write_warc_record(warc_writer, rec_headers, rec_content):
 
     rec_headers = StatusAndHeadersParser(
         ArcWarcRecordLoader.WARC_TYPES, verify=False).parse(BytesIO(b''.join(rec_headers)))
+    # Remove Content-Length header, since we cannot trust it
+    rec_headers.remove_header('Content-Length')
 
     rec_http_headers = []
     rec_payload = []
 
-    in_headers = rec_headers.get_header('Content-Type').startswith('application/http')
+    in_headers = rec_headers.get_header('WARC-Type') in ArcWarcRecordLoader.HTTP_TYPES
     for line in rec_content:
         if in_headers:
             if not line.strip():
@@ -157,7 +161,7 @@ def write_warc_record(warc_writer, rec_headers, rec_content):
         BytesIO(rec_payload),
         rec_http_headers,
         rec_headers.get_header('Content-Type'),
-        len(rec_payload)
+        None    # Recalculate Content-Length
     )
 
     warc_writer.write_record(record)
