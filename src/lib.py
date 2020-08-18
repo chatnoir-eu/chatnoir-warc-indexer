@@ -1,42 +1,45 @@
-import json
 import os
 import uuid
 from glob import glob
+import tempfile
+from zipfile import ZipFile
 
 import boto3
 from elasticsearch_dsl import connections
 from pyspark import SparkConf, SparkContext
 
-_CONFIG_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', 'conf'))
-_CONFIG = {}
+
+_CONFIG = None
 
 
-def load_properties_file(filename):
-    """
-    Load config properties file.
-
-    :param filename: file name (without .json or .local.json extension)
-    :return: config dict
-    """
-    properties = json.load(open(os.path.join(_CONFIG_DIR, '{}.json'.format(filename)), 'r'))
-    if os.path.isfile(os.path.join(_CONFIG_DIR, '{}.local.json'.format(filename))):
-        properties.update(json.load(open(os.path.join(_CONFIG_DIR, '{}.local.json'.format(filename)), 'r')))
-    return properties
-
-
-def get_config(config_file=None):
+def get_config():
     """
     Load application configuration.
-
-    :param config_file: alternative config file
     """
-    if not _CONFIG:
-        _CONFIG.update(load_properties_file('config'))
-
-    if config_file is not None:
-        _CONFIG.update(json.load(open(config_file, 'r')))
+    global _CONFIG
+    if _CONFIG is None:
+        import conf.config
+        _CONFIG = conf.config.CONFIG
+        try:
+            import conf.local_config
+            _CONFIG.update(conf.local_config.CONFIG)
+        except ImportError:
+            raise RuntimeError("Could not find conf.local_config.py.")
 
     return _CONFIG
+
+
+def create_lib_zip():
+    """
+    ZIP Python files and modules in source directory to a temporary file.
+    """
+    tmp_file = tempfile.NamedTemporaryFile(suffix='.zip')
+    zip_file = ZipFile(tmp_file, 'w')
+
+    for py_file in glob(os.path.join(os.path.dirname(__file__), '**', '*.py'), recursive=True):
+        zip_file.write(py_file, arcname=os.path.relpath(py_file, os.path.dirname(__file__)))
+    zip_file.close()
+    return tmp_file
 
 
 def init_es_connection():

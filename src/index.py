@@ -43,14 +43,6 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix):
        .count())
 
 
-def with_config(func):
-    """Decorator for retaining configuration in Spark workers."""
-    def configured(*args, config, **kwargs):
-        lib._CONFIG.update(config)
-        return func(*args, **kwargs)
-    return partial(configured, config=lib.get_config())
-
-
 def setup_metadata_index(index_name):
     lib.init_es_connection()
     metadata = edsl.Index(index_name)
@@ -77,7 +69,6 @@ def setup_metadata_index(index_name):
     MetaDoc.init()
 
 
-@with_config
 def parse_warc(obj_name, bucket):
     warc = lib.get_s3_resource().Object(bucket, obj_name).get()['Body']
     iterator = ArchiveIterator(warc)
@@ -95,7 +86,6 @@ def parse_warc(obj_name, bucket):
         yield obj_name, iterator.offset, record_copy
 
 
-@with_config
 def parse_record(warc_triple, doc_id_prefix, discard_content=False):
     """
     Parse WARC record into header dict and decoded content.
@@ -136,7 +126,6 @@ def parse_record(warc_triple, doc_id_prefix, discard_content=False):
     return str(lib.get_webis_uuid(doc_id_prefix, doc_id)), meta, content if not discard_content else None
 
 
-@with_config
 def create_index_actions(data_tuple, meta_index, content_index):
     doc_id, meta, content = data_tuple
     if meta:
@@ -155,7 +144,6 @@ def create_index_actions(data_tuple, meta_index, content_index):
         }
 
 
-@with_config
 def index_bulk(actions_partition):
     lib.init_es_connection()
     yield from streaming_bulk(edsl.connections.get_connection(), actions_partition)

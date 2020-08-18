@@ -1,5 +1,5 @@
 ### Config files
-conf/*.local.*
+src/conf/local_config.py
 
 ### Python
 *.log
