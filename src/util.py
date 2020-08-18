@@ -64,6 +64,9 @@ def repack_warc(obj_name, in_bucket, out_bucket):
 
             for line in in_warc:
                 if (in_headers or after_record) and line.startswith(b'WARC/'):
+                    if rec_headers:
+                        # Write previous record if not first
+                        write_warc_record(warc_writer, rec_headers, rec_content)
                     after_record = False
                     rec_headers = [line]
                     rec_content = []
@@ -93,11 +96,16 @@ def repack_warc(obj_name, in_bucket, out_bucket):
                     rec_content_len += len(line)
                     rec_content.append(line)
                     if content_length <= rec_content_len:
+                        # Record is supposed to be done, but there may be more
+                        # payload data before the next WARC header.
                         after_record = True
-                        write_warc_record(warc_writer, rec_headers, rec_content)
 
-            # Last record ended prematurely
-            if not after_record:
+                elif after_record and not line.startswith(b'WARC/') and line.strip():
+                    # Add excess payload to record content
+                    rec_content.append(line)
+
+            # Write last record
+            if len(rec_headers) > 1:
                 write_warc_record(warc_writer, rec_headers, rec_content)
 
             tmp_file.flush()
