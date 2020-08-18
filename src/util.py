@@ -165,6 +165,7 @@ def write_warc_record(warc_writer, rec_headers, rec_content):
     )
 
     warc_writer.write_record(record)
+    logger.debug('Record {} written.'.format(rec_headers.get_header('WARC-Record-ID')))
 
 
 if __name__ == '__main__':
