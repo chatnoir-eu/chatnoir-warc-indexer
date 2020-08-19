@@ -24,10 +24,10 @@ def main():
 @main.command()
 @click.argument('s3-in-bucket')
 @click.argument('s3-out-bucket')
-@click.option('-f', '--filter', type=str, default='parts/', help='Path prefix filter')
-def repack_clueweb_warcs(s3_in_bucket, s3_out_bucket, filter):
+@click.option('-f', '--path_filter', type=str, default='parts/', help='Path prefix filter')
+def repack_clueweb_warcs(s3_in_bucket, s3_out_bucket, path_filter):
     """
-    Repack buggy ClueWeb WARC files to a working WARC/0.18 format that is readable by warcio.
+    Repack buggy and unsplittable ClueWeb WARC files to a working WARC/0.18 format that is readable by warcio.
     """
 
     if s3_in_bucket == s3_out_bucket:
@@ -40,7 +40,7 @@ def repack_clueweb_warcs(s3_in_bucket, s3_out_bucket, filter):
     s3 = lib.get_s3_resource()
 
     (sc
-     .parallelize(o.key for o in s3.Bucket(s3_in_bucket).objects.filter(Prefix=filter))
+     .parallelize(o.key for o in s3.Bucket(s3_in_bucket).objects.filter(Prefix=path_filter))
      .repartition(sc.defaultParallelism)
      .foreach(partial(repack_warc, in_bucket=s3_in_bucket, out_bucket=s3_out_bucket)))
 
@@ -82,8 +82,8 @@ def repack_warc(obj_name, in_bucket, out_bucket):
 
                     h = line.split(b':', maxsplit=1)
                     if len(h) < 2:
-                        # Erroneous multiline URL
-                        rec_headers[-1] = rec_headers[-1].rstrip() + h[0]
+                        # Continuation or erroneous multiline URL
+                        rec_headers[-1] = rec_headers[-1].rstrip() + h[0].lstrip()
                     else:
                         rec_headers.append(line)
 
