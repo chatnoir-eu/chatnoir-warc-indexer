@@ -24,7 +24,7 @@ def main():
 @main.command()
 @click.argument('s3-in-bucket')
 @click.argument('s3-out-bucket')
-@click.option('-f', '--path_filter', type=str, default='parts/', help='Path prefix filter')
+@click.option('-f', '--path-filter', type=str, default='parts/', help='Input path prefix filter')
 def repack_clueweb_warcs(s3_in_bucket, s3_out_bucket, path_filter):
     """
     Repack buggy and unsplittable ClueWeb WARC files to a working WARC/0.18 format that is readable by warcio.
@@ -38,10 +38,10 @@ def repack_clueweb_warcs(s3_in_bucket, s3_out_bucket, path_filter):
     sc.addPyFile(py_files.name)
 
     s3 = lib.get_s3_resource()
+    file_list = list(o.key for o in s3.Bucket(s3_in_bucket).objects.filter(Prefix=path_filter))
 
     (sc
-     .parallelize(o.key for o in s3.Bucket(s3_in_bucket).objects.filter(Prefix=path_filter))
-     .repartition(sc.defaultParallelism)
+     .parallelize(file_list, numSlices=len(file_list))
      .foreach(partial(repack_warc, in_bucket=s3_in_bucket, out_bucket=s3_out_bucket)))
 
 
@@ -112,7 +112,7 @@ def repack_warc(obj_name, in_bucket, out_bucket):
             tmp_file.flush()
             tmp_file.seek(0)
             s3.Object(out_bucket, obj_name).put(Body=tmp_file)
-            logger.info('Converted WARC {}'.format(obj_name))
+            logger.info('WARC {} converted.'.format(obj_name))
 
 
 class LenientStatusAndHeadersParser(StatusAndHeaders):

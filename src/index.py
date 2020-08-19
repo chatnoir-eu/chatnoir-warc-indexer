@@ -17,26 +17,29 @@ logger = logging.getLogger()
 
 
 @click.group()
-@click.option('-c', '--config', type=click.File('r'), help='Alternative configuration file')
-def main(config):
-    if config:
-        lib.get_config(config)
+def main():
+    pass
 
 
 @main.command()
 @click.argument('s3-bucket')
 @click.argument('meta-index')
 @click.argument('doc-id-prefix')
-def warc_offsets(s3_bucket, meta_index, doc_id_prefix):
+@click.option('-f', '--path-filter', type=str, default='', help='Input path prefix filter')
+def warc_offsets(s3_bucket, meta_index, doc_id_prefix, path_filter):
     """
     Index offsets of WARC documents into Elasticsearch.
     """
     setup_metadata_index(meta_index)
 
     sc = lib.get_spark_context()
+
     s3 = lib.get_s3_resource()
-    (sc.parallelize(o.key for o in s3.Bucket(s3_bucket).objects.all())
+    file_list = list(o.key for o in s3.Bucket(s3_bucket).objects.filter(Prefix=path_filter))
+
+    (sc.parallelize(file_list, numSlices=max(len(file_list), sc.defaultParallelism))
        .flatMap(partial(parse_warc, bucket=s3_bucket))
+       .coalesce(sc.defaultParallelism)
        .map(partial(parse_record, doc_id_prefix=doc_id_prefix, discard_content=True))
        .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None))
        .mapPartitions(index_bulk)
@@ -70,6 +73,10 @@ def setup_metadata_index(index_name):
 
 
 def parse_warc(obj_name, bucket):
+    if not obj_name.endswith('.warc.gz'):
+        logger.warning('Skipping non-WARC file {}'.format(obj_name))
+        return []
+
     warc = lib.get_s3_resource().Object(bucket, obj_name).get()['Body']
     iterator = ArchiveIterator(warc)
     for record in iterator:
