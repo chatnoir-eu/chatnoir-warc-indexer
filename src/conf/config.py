@@ -8,7 +8,6 @@ CONFIG = {
         'aws_secret_access_key': 'your secret key'
     },
     'spark': {
-        'spark.master': 'local[*]'
     },
     'meta_index_settings': {
         'number_of_shards': 12,
