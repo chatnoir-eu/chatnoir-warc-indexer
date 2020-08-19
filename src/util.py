@@ -27,7 +27,7 @@ def main():
 @click.option('-f', '--filter', type=str, default='parts/', help='Path prefix filter')
 def repack_clueweb_warcs(s3_in_bucket, s3_out_bucket, filter):
     """
-    Repack buggy ClueWeb WARC files to a modern WARC/1.0 format that is readable by warcio.
+    Repack buggy ClueWeb WARC files to a working WARC/0.18 format that is readable by warcio.
     """
 
     if s3_in_bucket == s3_out_bucket:
@@ -47,6 +47,7 @@ def repack_clueweb_warcs(s3_in_bucket, s3_out_bucket, filter):
 
 def repack_warc(obj_name, in_bucket, out_bucket):
     if not obj_name.endswith('.warc.gz'):
+        logger.warning('Skipping non-WARC file {}'.format(obj_name))
         return
 
     s3 = lib.get_s3_resource()
