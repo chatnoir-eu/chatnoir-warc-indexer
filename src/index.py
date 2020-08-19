@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
-import logging
+from calendar import monthrange
 from functools import partial
+import logging
+import re
 
 import chardet
 import click
@@ -69,6 +71,17 @@ def setup_metadata_index(index_name):
         warc_payload_digest = edsl.Keyword()
         warc_block_digest = edsl.Keyword()
 
+        class Meta:
+            dynamic_templates = edsl.MetaField([{
+                'additional_warc_headers': {
+                    'match_mapping_type': 'string',
+                    'match': 'warc_*',
+                    'mapping': {
+                        'type': 'keyword'
+                    }
+                }
+            }])
+
     MetaDoc.init()
 
 
@@ -128,6 +141,17 @@ def parse_record(warc_triple, doc_id_prefix, discard_content=False):
         'content_encoding': encoding.lower() if encoding is not None else None,
         **{h.replace('-', '_').lower(): v for h, v in warc_record.rec_headers.headers if h.startswith('WARC-')}
     }
+
+    # Clueweb WARCs have buggy dates like '2009-03-82T07:34:44-0700' causing indexing errors
+    if 'warc_date' in meta:
+        def clip_day(y, m, d):
+            return '{:02}'.format(min(int(d), monthrange(int(y), int(m))[1]))
+        meta['warc_date'] = re.sub(r'(\d{4})-(\d{2})-(\d+)',
+                                   lambda g: '{}-{}-{}'.format(
+                                       g.group(1),
+                                       g.group(2),
+                                       clip_day(g.group(1), g.group(2), g.group(3))),
+                                   meta['warc_date'])
 
     doc_id = meta['warc_trec_id'] if 'warc_trec_id' in meta else meta['warc_record_id']
     return str(lib.get_webis_uuid(doc_id_prefix, doc_id)), meta, content if not discard_content else None
