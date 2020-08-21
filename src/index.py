@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
-from calendar import monthrange
 from functools import partial
 import logging
-import re
 
 import chardet
 import click
@@ -28,7 +26,8 @@ def main():
 @click.argument('meta-index')
 @click.argument('doc-id-prefix')
 @click.option('-f', '--path-filter', type=str, default='', help='Input path prefix filter')
-def warc_offsets(s3_bucket, meta_index, doc_id_prefix, path_filter):
+@click.option('-c', '--chunk-size', type=int, default=300, help='Indexing chunk size')
+def warc_offsets(s3_bucket, meta_index, doc_id_prefix, path_filter, chunk_size):
     """
     Index offsets of WARC documents into Elasticsearch.
     """
@@ -39,12 +38,11 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix, path_filter):
     s3 = lib.get_s3_resource()
     file_list = list(o.key for o in s3.Bucket(s3_bucket).objects.filter(Prefix=path_filter))
 
-    (sc.parallelize(file_list, numSlices=max(len(file_list), sc.defaultParallelism))
-       .flatMap(partial(parse_warc, bucket=s3_bucket))
-       .coalesce(sc.defaultParallelism)
-       .map(partial(parse_record, doc_id_prefix=doc_id_prefix, discard_content=True))
-       .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None))
-       .mapPartitions(index_bulk)
+    (sc.parallelize(file_list, numSlices=len(file_list))
+       .flatMap(partial(parse_warc, doc_id_prefix=doc_id_prefix, bucket=s3_bucket))
+       .map(partial(parse_record, discard_content=True), preservesPartitioning=True)
+       .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None), preservesPartitioning=True)
+       .mapPartitions(partial(index_bulk, chunk_size=chunk_size), preservesPartitioning=True)
        .count())
 
 
@@ -55,19 +53,23 @@ def setup_metadata_index(index_name):
 
     @metadata.document
     class MetaDoc(edsl.Document):
-        warc_file = edsl.Keyword()
-        warc_offset = edsl.Long()
+        source_file = edsl.Keyword()
+        source_offset = edsl.Long()
         content_length = edsl.Long()
         content_type = edsl.Keyword()
         content_encoding = edsl.Keyword()
-        http_length = edsl.Long()
+        http_content_length = edsl.Long()
+        http_content_type = edsl.Keyword()
         warc_type = edsl.Keyword()
         warc_date = edsl.Date(format='date_time_no_millis')
         warc_record_id = edsl.Keyword()
-        warc_warc_info_id = edsl.Keyword()
+        warc_trec_id = edsl.Keyword()
+        warc_warcinfo_id = edsl.Keyword()
         warc_concurrent_to = edsl.Keyword()
+        warc_truncated = edsl.Keyword()
         warc_ip_address = edsl.Ip()
         warc_target_uri = edsl.Keyword()
+        warc_identified_payload_type = edsl.Keyword()
         warc_payload_digest = edsl.Keyword()
         warc_block_digest = edsl.Keyword()
 
@@ -85,7 +87,15 @@ def setup_metadata_index(index_name):
     MetaDoc.init()
 
 
-def parse_warc(obj_name, bucket):
+def parse_warc(obj_name, doc_id_prefix, bucket):
+    """
+    Iterate WARC and extract records.
+
+    :param obj_name: input WARC file
+    :param doc_id_prefix: prefix for generating Webis record UUIDs
+    :param bucket: source S3 bucket
+    :return: tuple of doc_uuid, (obj_name, offset, record)
+    """
     if not obj_name.endswith('.warc.gz'):
         logger.warning('Skipping non-WARC file {}'.format(obj_name))
         return []
@@ -103,81 +113,84 @@ def parse_warc(obj_name, bucket):
         )
         record_copy.content = record.content_stream().read()
 
-        yield obj_name, iterator.offset, record_copy
+        doc_id = record_copy.rec_headers.get_header('WARC-TREC-ID',
+                                                    record_copy.rec_headers.get_header('WARC-Record-ID'))
+
+        yield str(lib.get_webis_uuid(doc_id_prefix, doc_id)), (obj_name, iterator.offset, record_copy)
 
 
-def parse_record(warc_triple, doc_id_prefix, discard_content=False):
+def parse_record(warc_tuple, discard_content=False):
     """
     Parse WARC record into header dict and decoded content.
     
-    :param warc_triple: triple of WARC filename, offset, record
-    :param doc_id_prefix: prefix for generating Webis UUIDs
+    :param warc_tuple: triple of WARC filename, offset, record
     :param discard_content: do not return WARC content (useful for metadata-only indexing)
-    :return: tuple of meta data and content
+    :return: tuple of doc_uuid, (meta data, content)
     """
-    warc_file, warc_offset, warc_record = warc_triple
+    doc_uuid, (warc_file, warc_offset,  warc_record) = warc_tuple
 
     content = warc_record.content
-    content_len = len(content)
-
-    # Try to detect content encoding
-    content_type = warc_record.http_headers.get_header('Content-Type', '').split(';')[0].strip()
+    content_type = warc_record.rec_headers.get_header('Content-Type', '')
+    content_length = warc_record.length
+    http_content_length = 0
+    http_content_type = None
     encoding = None
-    if content_type.startswith('text/'):
-        http_enc = warc_record.http_headers.get_header('Content-Type').split(';')
-        if len(http_enc) > 1 and 'charset=' in http_enc[1]:
-            encoding = http_enc[1].replace('charset=', '').strip()
-        else:
-            encoding = chardet.detect(content).get('encoding')
-        if encoding is not None and not discard_content:
-            content = content.decode(encoding, errors='ignore')
+    if content_type.startswith('application/http'):
+        http_content_length = len(content)
+        t = warc_record.http_headers.get_header('Content-Type', '').split(';', maxsplit=1)
+        http_content_type = t[0].strip()
+        if len(t) == 2 and (http_content_type.startswith('text/') or
+                            http_content_type in ['application/xhtml+xml', 'application/json']):
+            encoding = t[1].replace('charset=', '').strip()
+
+    # Fallback: try to detect content encoding
+    if encoding is None:
+        encoding = chardet.detect(content).get('encoding')
+
+    if encoding is not None and not discard_content:
+        content = content.decode(encoding, errors='ignore')
 
     meta = {
-        'warc_file': warc_file,
-        'warc_offset': warc_offset,
-        'content_length': content_len,
+        'source_file': warc_file,
+        'source_offset': warc_offset,
+        **{h.replace('-', '_').lower(): v for h, v in warc_record.rec_headers.headers if h.startswith('WARC-')},
         'content_type': content_type,
-        'http_length': int(warc_record.rec_headers.get_header('Content-Length')),
-        'content_encoding': encoding.lower() if encoding is not None else None,
-        **{h.replace('-', '_').lower(): v for h, v in warc_record.rec_headers.headers if h.startswith('WARC-')}
+        'content_length': content_length,
+        'http_content_length': http_content_length,
+        'http_content_type': http_content_type,
+        'content_encoding': encoding.lower() if encoding else None
     }
 
-    # Clueweb WARCs have buggy dates like '2009-03-82T07:34:44-0700' causing indexing errors
     if 'warc_date' in meta:
-        def clip_day(y, m, d):
-            return '{:02}'.format(min(int(d), monthrange(int(y), int(m))[1]))
-        meta['warc_date'] = re.sub(r'(\d{4})-(\d{2})-(\d+)',
-                                   lambda g: '{}-{}-{}'.format(
-                                       g.group(1),
-                                       g.group(2),
-                                       clip_day(g.group(1), g.group(2), g.group(3))),
-                                   meta['warc_date'])
+        # Fix buggy ClueWeb WARC-Date headers
+        meta['warc_date'] = lib.clip_warc_date(meta['warc_date'])
 
-    doc_id = meta['warc_trec_id'] if 'warc_trec_id' in meta else meta['warc_record_id']
-    return str(lib.get_webis_uuid(doc_id_prefix, doc_id)), meta, content if not discard_content else None
+    return doc_uuid, (meta, content if not discard_content else None)
 
 
 def create_index_actions(data_tuple, meta_index, content_index):
-    doc_id, meta, content = data_tuple
+    doc_uuid, (meta, content) = data_tuple
     if meta:
-        yield {
+        yield doc_uuid, {
             '_op_type': 'index',
             '_index': meta_index,
-            '_id': doc_id,
+            '_id': doc_uuid,
             **meta
         }
     if content:
-        yield {
+        yield doc_uuid, {
             '_op_type': 'index',
             '_index': content_index,
-            '_id': doc_id,
+            '_id': doc_uuid,
             **content
         }
 
 
-def index_bulk(actions_partition):
+def index_bulk(actions_partition, chunk_size):
     lib.init_es_connection()
-    yield from streaming_bulk(edsl.connections.get_connection(), actions_partition)
+    yield from streaming_bulk(edsl.connections.get_connection(),
+                              (a[1] for a in actions_partition),
+                              chunk_size=chunk_size)
 
 
 if __name__ == '__main__':

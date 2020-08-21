@@ -1,6 +1,8 @@
+from calendar import monthrange
 import os
 import uuid
 from glob import glob
+import re
 import tempfile
 from zipfile import ZipFile
 
@@ -85,3 +87,18 @@ def get_webis_uuid(corpus_prefix, internal_id):
     :return: Webis UUID
     """
     return uuid.uuid5(uuid.NAMESPACE_URL, ':'.join((corpus_prefix, internal_id)))
+
+
+def clip_warc_date(date_val):
+    """
+    ClueWeb WARCs have buggy WARC-Date headers with values such as '2009-03-82T07:34:44-0700', causing indexing errors.
+    This function clips the day part to the number of days a month has.
+
+    :param date_val: potentially malformed ISO 8601 date value
+    :return: fixed date if day is out of range else input unchanged
+    """
+    def c(y, m, d):
+        return '{:02}'.format(min(int(d), monthrange(int(y), int(m))[1]))
+
+    return re.sub(r'(\d{4})-(\d{2})-(\d+)',
+                  lambda g: '{}-{}-{}'.format(g.group(1), g.group(2), c(g.group(1), g.group(2), g.group(3))), date_val)
