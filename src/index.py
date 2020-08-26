@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 
 from functools import partial
+import itertools
 import logging
+import time
 
 import chardet
 import click
+from elasticsearch.exceptions import ConnectionError
 import elasticsearch_dsl as edsl
-from elasticsearch.helpers import streaming_bulk
+from elasticsearch.helpers import bulk
 from elasticsearch_dsl import connections
 from warcio.archiveiterator import ArchiveIterator
 from warcio.recordloader import ArcWarcRecord
@@ -26,7 +29,7 @@ def main():
 @click.argument('meta-index')
 @click.argument('doc-id-prefix')
 @click.option('-f', '--path-filter', type=str, default='', help='Input path prefix filter')
-@click.option('-c', '--chunk-size', type=int, default=300, help='Indexing chunk size')
+@click.option('-c', '--chunk-size', type=int, default=400, show_default=True, help='Indexing chunk size')
 def warc_offsets(s3_bucket, meta_index, doc_id_prefix, path_filter, chunk_size):
     """
     Index offsets of WARC documents into Elasticsearch.
@@ -42,8 +45,7 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix, path_filter, chunk_size):
        .flatMap(partial(parse_warc, doc_id_prefix=doc_id_prefix, bucket=s3_bucket))
        .map(partial(parse_record, discard_content=True), preservesPartitioning=True)
        .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None), preservesPartitioning=True)
-       .mapPartitions(partial(index_bulk, chunk_size=chunk_size), preservesPartitioning=True)
-       .count())
+       .foreachPartition(partial(index_partition_in_batches, chunk_size=chunk_size)))
 
 
 def setup_metadata_index(index_name):
@@ -186,11 +188,34 @@ def create_index_actions(data_tuple, meta_index, content_index):
         }
 
 
-def index_bulk(actions_partition, chunk_size):
+def index_partition_in_batches(partition, chunk_size):
     lib.init_es_connection()
-    yield from streaming_bulk(edsl.connections.get_connection(),
-                              (a[1] for a in actions_partition),
-                              chunk_size=chunk_size)
+
+    part_iter = iter(partition)
+    while True:
+        batch = [v for _, v in itertools.islice(part_iter, chunk_size)]
+        if not batch:
+            break
+        index_micro_batch(batch, chunk_size)
+
+
+def index_micro_batch(micro_batch, chunk_size, max_retries=10):
+    if type(micro_batch) not in (list, tuple):
+        raise RuntimeError('Batch must be a list or tuple.')
+
+    retry = 1
+    while retry <= max_retries:
+        try:
+            return bulk(edsl.connections.get_connection(), micro_batch, max_retries=max_retries,
+                        chunk_size=chunk_size, request_timeout=60, stats_only=True)
+        except ConnectionError as e:
+            logger.error('Transport error, attempt {}/{} failed.'.format(retry, max_retries))
+            if retry < max_retries:
+                logger.error(e)
+                retry += 1
+                time.sleep(2)
+            else:
+                raise e
 
 
 if __name__ == '__main__':

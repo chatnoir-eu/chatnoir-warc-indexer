@@ -10,8 +10,9 @@ CONFIG = {
     'spark': {
     },
     'meta_index_settings': {
-        'number_of_shards': 12,
+        'number_of_shards': 20,
         'number_of_replicas': 0,
-        'refresh_interval': '100s'
+        'refresh_interval': -1,
+        'codec': 'best_compression'
     }
 }

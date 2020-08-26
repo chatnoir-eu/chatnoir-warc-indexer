@@ -48,9 +48,10 @@ def init_es_connection():
     """
     Initialize default Elasticsearch connection.
     """
-    connections.configure(default={
-        **get_config()['es']
-    })
+    if 'default' not in connections.connections._conns:
+        connections.configure(default={
+            **get_config()['es']
+        })
 
 
 def get_s3_resource():
