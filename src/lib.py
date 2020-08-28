@@ -7,6 +7,7 @@ import tempfile
 from zipfile import ZipFile
 
 import boto3
+from elasticsearch import Elasticsearch
 from elasticsearch_dsl import connections
 from pyspark import SparkConf, SparkContext
 
@@ -44,9 +45,16 @@ def create_lib_zip():
     return tmp_file
 
 
+def create_es_client():
+    """
+    Create and return new Elasticsearch client and connection.
+    """
+    return Elasticsearch(**get_config()['es'])
+
+
 def init_es_connection():
     """
-    Initialize default Elasticsearch connection.
+    Initialize persistent default Elasticsearch DSL connection.
     """
     if 'default' not in connections.connections._conns:
         connections.configure(default={

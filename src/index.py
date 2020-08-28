@@ -4,13 +4,13 @@ from functools import partial
 import itertools
 import logging
 import time
+import uuid
 
 import chardet
 import click
 from elasticsearch.exceptions import ConnectionError
 import elasticsearch_dsl as edsl
 from elasticsearch.helpers import bulk
-from elasticsearch_dsl import connections
 from warcio.archiveiterator import ArchiveIterator
 from warcio.recordloader import ArcWarcRecord
 
@@ -22,6 +22,10 @@ logger = logging.getLogger()
 @click.group()
 def main():
     pass
+
+
+def uuid_prefix_partitioner(key, num_partitions):
+    return uuid.UUID(key).int * num_partitions // pow(16, 32)
 
 
 @main.command()
@@ -42,10 +46,14 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix, path_filter, chunk_size):
     file_list = list(o.key for o in s3.Bucket(s3_bucket).objects.filter(Prefix=path_filter))
 
     (sc.parallelize(file_list, numSlices=len(file_list))
-       .flatMap(partial(parse_warc, doc_id_prefix=doc_id_prefix, bucket=s3_bucket))
-       .map(partial(parse_record, discard_content=True), preservesPartitioning=True)
-       .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None), preservesPartitioning=True)
-       .foreachPartition(partial(index_partition_in_batches, chunk_size=chunk_size)))
+     .flatMap(partial(parse_warc, doc_id_prefix=doc_id_prefix, bucket=s3_bucket))
+     .map(partial(parse_record, discard_content=True), preservesPartitioning=True)
+     .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None), preservesPartitioning=True)
+     .repartitionAndSortWithinPartitions(
+        numPartitions=sc.defaultParallelism,
+        partitionFunc=partial(uuid_prefix_partitioner, num_partitions=sc.defaultParallelism))
+     .cache()
+     .foreachPartition(partial(index_partition_in_batches, chunk_size=chunk_size)))
 
 
 def setup_metadata_index(index_name):
@@ -189,24 +197,24 @@ def create_index_actions(data_tuple, meta_index, content_index):
 
 
 def index_partition_in_batches(partition, chunk_size):
-    lib.init_es_connection()
+    es = lib.create_es_client()
 
     part_iter = iter(partition)
     while True:
-        batch = [v for _, v in itertools.islice(part_iter, chunk_size)]
+        batch = [v for _, v in itertools.islice(part_iter, chunk_size * 10)]
         if not batch:
             break
-        index_micro_batch(batch, chunk_size)
+        index_micro_batch(es, batch, chunk_size)
 
 
-def index_micro_batch(micro_batch, chunk_size, max_retries=10):
+def index_micro_batch(es, micro_batch, chunk_size, max_retries=10):
     if type(micro_batch) not in (list, tuple):
         raise RuntimeError('Batch must be a list or tuple.')
 
     retry = 1
     while retry <= max_retries:
         try:
-            return bulk(edsl.connections.get_connection(), micro_batch, max_retries=max_retries,
+            return bulk(es, micro_batch, max_retries=max_retries,
                         chunk_size=chunk_size, request_timeout=60, stats_only=True)
         except ConnectionError as e:
             logger.error('Transport error, attempt {}/{} failed.'.format(retry, max_retries))
