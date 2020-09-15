@@ -33,9 +33,7 @@ def repack_clueweb_warcs(s3_in_bucket, s3_out_bucket, path_filter):
     if s3_in_bucket == s3_out_bucket:
         raise click.UsageError('Input and output bucket must not be the same.')
 
-    py_files = lib.create_lib_zip()
     sc = lib.get_spark_context()
-    sc.addPyFile(py_files.name)
 
     s3 = lib.get_s3_resource()
     file_list = list(o.key for o in s3.Bucket(s3_in_bucket).objects.filter(Prefix=path_filter))
