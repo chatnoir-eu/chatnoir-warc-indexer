@@ -7,6 +7,7 @@ import uuid
 import chardet
 import click
 import elasticsearch_dsl as edsl
+from pyspark.shuffle import ExternalSorter
 from warcio.archiveiterator import ArchiveIterator
 from warcio.recordloader import ArcWarcRecord
 
@@ -28,9 +29,11 @@ def uuid_prefix_partitioner(key, num_partitions):
 @click.argument('s3-bucket')
 @click.argument('meta-index')
 @click.argument('doc-id-prefix')
+@click.option('-b', '--batch-size', type=int, default=2000,
+              help='Number of input files to process in one batch (last batch may be larger by up to 50%).')
 @click.option('-f', '--path-filter', type=str, default='', help='Input path prefix filter')
-@click.option('-c', '--chunk-size', type=int, default=400, show_default=True, help='Indexing chunk size')
-def warc_offsets(s3_bucket, meta_index, doc_id_prefix, path_filter, chunk_size):
+@click.option('-c', '--chunk-size', type=int, default=400, show_default=True, help='Chunk size of documents to index')
+def warc_offsets(s3_bucket, meta_index, doc_id_prefix, batch_size, path_filter, chunk_size):
     """
     Index offsets of WARC documents into Elasticsearch.
     """
@@ -39,21 +42,34 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix, path_filter, chunk_size):
     sc = lib.get_spark_context()
 
     s3 = lib.get_s3_resource()
+    logger.debug('Retrieving file list...')
     file_list = list(o.key for o in s3.Bucket(s3_bucket).objects.filter(Prefix=path_filter))
+    logger.info('Retrieved file list.')
 
-    (sc.parallelize(file_list, numSlices=len(file_list))
-     .flatMap(partial(parse_warc, doc_id_prefix=doc_id_prefix, bucket=s3_bucket))
-     .map(partial(parse_record, discard_content=True), preservesPartitioning=True)
-     .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None), preservesPartitioning=True)
-     .sortByKey()
-     .cache()
-     .foreachPartition(partial(index_partition, chunk_size=chunk_size)))
+    # Avoid last batch being smaller than 0.5 * batch_size and append remainder to previous batch instead
+    num_batches = int(len(file_list) / batch_size + 0.5)
+
+    for i in range(num_batches):
+        logger.info('Starting batch {} of {}...'.format(i, num_batches))
+
+        slice_start = i * batch_size
+        slice_end = slice_start + batch_size if i + 1 < num_batches else len(file_list)
+
+        (sc.parallelize(file_list[slice_start:slice_end], numSlices=slice_end - slice_start)
+         .flatMap(partial(parse_warc, doc_id_prefix=doc_id_prefix, bucket=s3_bucket))
+         .map(partial(parse_record, discard_content=True), preservesPartitioning=True)
+         .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None), preservesPartitioning=True)
+         .cache()
+         .repartitionAndSortWithinPartitions(sc.defaultParallelism,
+                                             partial(uuid_prefix_partitioner, num_partitions=sc.defaultParallelism))
+         .foreachPartition(partial(index_partition, chunk_size=chunk_size)))
+
+        logger.info('Completed batch {}.'.format(i))
 
 
 def setup_metadata_index(index_name):
     lib.init_es_connection()
     metadata = edsl.Index(index_name)
-    metadata.settings(**lib.get_config()['meta_index_settings'])
 
     @metadata.document
     class MetaDoc(edsl.Document):
@@ -88,7 +104,16 @@ def setup_metadata_index(index_name):
                 }
             }])
 
-    MetaDoc.init()
+    if not metadata.exists():
+        metadata.settings(**lib.get_config()['meta_index_settings'])
+        MetaDoc.init()
+
+
+def sortPartition(iterator, memory_limit):
+    """
+    Sort partition (taken from pyspark.rdd)
+    """
+    return iter(ExternalSorter(memory_limit).sorted(iterator, key=lambda k_v: k_v[0], reverse=False))
 
 
 def parse_warc(obj_name, doc_id_prefix, bucket):

@@ -147,7 +147,7 @@ def bulk_index_partition(partition, es, chunk_size=400, batch_size=None, max_ret
         batch = [v for _, v in itertools.islice(part_iter, batch_size)]
         if not batch:
             break
-        bulk_index_micro_batch(es, batch, chunk_size, max_retries, initial_backoff, max_backoff)
+        bulk_index_micro_batch(batch, es, chunk_size, max_retries, initial_backoff, max_backoff)
 
 
 def bulk_index_micro_batch(micro_batch, es, chunk_size, max_retries=10, initial_backoff=2, max_backoff=600):

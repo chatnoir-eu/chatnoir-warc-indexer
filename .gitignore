@@ -1,3 +1,7 @@
+### Binaries
+*.zip
+
+
 ### Config files
 src/conf/local_config.py
 
