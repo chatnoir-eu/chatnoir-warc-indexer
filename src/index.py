@@ -7,7 +7,6 @@ import uuid
 import chardet
 import click
 import elasticsearch_dsl as edsl
-from pyspark.shuffle import ExternalSorter
 from warcio.archiveiterator import ArchiveIterator
 from warcio.recordloader import ArcWarcRecord
 
@@ -107,13 +106,6 @@ def setup_metadata_index(index_name):
     if not metadata.exists():
         metadata.settings(**lib.get_config()['meta_index_settings'])
         MetaDoc.init()
-
-
-def sortPartition(iterator, memory_limit):
-    """
-    Sort partition (taken from pyspark.rdd)
-    """
-    return iter(ExternalSorter(memory_limit).sorted(iterator, key=lambda k_v: k_v[0], reverse=False))
 
 
 def parse_warc(obj_name, doc_id_prefix, bucket):
