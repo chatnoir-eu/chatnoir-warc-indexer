@@ -28,11 +28,13 @@ def uuid_prefix_partitioner(key, num_partitions):
 @click.argument('s3-bucket')
 @click.argument('meta-index')
 @click.argument('doc-id-prefix')
-@click.option('-b', '--batch-size', type=int, default=2000,
+@click.option('-b', '--batch-size', type=int, default=1000, show_default=True,
               help='Number of input files to process in one batch (last batch may be larger by up to 50%).')
 @click.option('-f', '--path-filter', type=str, default='', help='Input path prefix filter')
 @click.option('-c', '--chunk-size', type=int, default=400, show_default=True, help='Chunk size of documents to index')
-def warc_offsets(s3_bucket, meta_index, doc_id_prefix, batch_size, path_filter, chunk_size):
+@click.option('-p', '--index-parallelism', type=int, default=130, show_default=True,
+              help='Number of partitions for indexing (should be smaller or equal number of workers)')
+def warc_offsets(s3_bucket, meta_index, doc_id_prefix, batch_size, path_filter, chunk_size, index_parallelism):
     """
     Index offsets of WARC documents into Elasticsearch.
     """
@@ -59,7 +61,7 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix, batch_size, path_filter, 
          .map(partial(parse_record, discard_content=True), preservesPartitioning=True)
          .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None), preservesPartitioning=True)
          .cache()
-         .repartitionAndSortWithinPartitions(sc.defaultParallelism,
+         .repartitionAndSortWithinPartitions(index_parallelism,
                                              partial(uuid_prefix_partitioner, num_partitions=sc.defaultParallelism))
          .foreachPartition(partial(index_partition, chunk_size=chunk_size)))
 
