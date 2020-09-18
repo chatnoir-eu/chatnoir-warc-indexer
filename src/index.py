@@ -60,9 +60,9 @@ def warc_offsets(s3_bucket, meta_index, doc_id_prefix, batch_size, path_filter, 
          .flatMap(partial(parse_warc, doc_id_prefix=doc_id_prefix, bucket=s3_bucket))
          .map(partial(parse_record, discard_content=True), preservesPartitioning=True)
          .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=None), preservesPartitioning=True)
-         .cache()
          .repartitionAndSortWithinPartitions(index_parallelism,
-                                             partial(uuid_prefix_partitioner, num_partitions=sc.defaultParallelism))
+                                             partial(uuid_prefix_partitioner, num_partitions=index_parallelism))
+         .cache()
          .foreachPartition(partial(index_partition, chunk_size=chunk_size)))
 
         logger.info('Completed batch {}.'.format(i))
