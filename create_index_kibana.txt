@@ -1,0 +1,2506 @@
+PUT /chatnoir_index_clueweb_09
+{
+    "settings" : {
+      "index" : {
+        "refresh_interval" : "3600s",
+        "number_of_shards" : "40",
+        "similarity": {
+              "lmj": {
+                "type": "LMJelinekMercer"
+              },
+              "lmd": {
+                "type": "LMDirichlet"
+              },
+              "dfr": {
+                "type": "DFR",
+                "basic_model": "g",
+                "after_effect": "l",
+                "normalization": "h2"
+              },
+              "scripted_tfidf": {
+                "type": "scripted",
+                "weight_script": {
+                  "source": "double idf = Math.log((field.docCount+1.0)/(term.docFreq+1.0)) + 1.0; return query.boost * idf;"
+                },
+                "script": {
+                  "source": "double tf = Math.sqrt(doc.freq); double norm = 1/Math.sqrt(doc.length); return weight * tf * norm;"
+                }
+              },
+              "dfi": { 
+                "type": "DFI",
+                "independence_measure":"chisquared"
+              },
+              "ib": { 
+                 "type": "IB",
+                 "distribution":"spl",
+                 "lambda":"ttf",
+                 "normalization": "h2"
+              }
+        },
+        "analysis" : {
+          "filter" : {
+            "host_stop_filter" : {
+              "type" : "stop",
+              "stopwords" : [
+                "com",
+                "net",
+                "org",
+                "ac",
+                "ad",
+                "ae",
+                "af",
+                "ag",
+                "ai",
+                "al",
+                "am",
+                "an",
+                "ao",
+                "aq",
+                "ar",
+                "as",
+                "at",
+                "au",
+                "aw",
+                "ax",
+                "az",
+                "ba",
+                "bb",
+                "bd",
+                "be",
+                "bf",
+                "bg",
+                "bh",
+                "bi",
+                "bj",
+                "bm",
+                "bn",
+                "bo",
+                "br",
+                "bs",
+                "bt",
+                "bv",
+                "bw",
+                "by",
+                "bz",
+                "ca",
+                "cc",
+                "cd",
+                "cf",
+                "cg",
+                "ch",
+                "ci",
+                "ck",
+                "cl",
+                "cm",
+                "cn",
+                "co",
+                "cr",
+                "cs",
+                "cu",
+                "cv",
+                "cx",
+                "cy",
+                "cz",
+                "dd",
+                "de",
+                "dj",
+                "dk",
+                "dm",
+                "do",
+                "dz",
+                "ec",
+                "ee",
+                "eg",
+                "eh",
+                "er",
+                "es",
+                "et",
+                "eu",
+                "fi",
+                "fj",
+                "fk",
+                "fm",
+                "fo",
+                "fr",
+                "ga",
+                "gb",
+                "gd",
+                "ge",
+                "gf",
+                "gg",
+                "gh",
+                "gi",
+                "gl",
+                "gm",
+                "gn",
+                "gp",
+                "gq",
+                "gr",
+                "gs",
+                "gt",
+                "gu",
+                "gw",
+                "gy",
+                "hk",
+                "hm",
+                "hn",
+                "hr",
+                "ht",
+                "hu",
+                "id",
+                "ie",
+                "il",
+                "im",
+                "in",
+                "io",
+                "iq",
+                "ir",
+                "is",
+                "it",
+                "je",
+                "jm",
+                "jo",
+                "jp",
+                "ke",
+                "kg",
+                "kh",
+                "ki",
+                "km",
+                "kn",
+                "kp",
+                "kr",
+                "kw",
+                "ky",
+                "kz",
+                "la",
+                "lb",
+                "lc",
+                "li",
+                "lk",
+                "lr",
+                "ls",
+                "lt",
+                "lu",
+                "lv",
+                "ly",
+                "ma",
+                "mc",
+                "md",
+                "me",
+                "mg",
+                "mh",
+                "mk",
+                "ml",
+                "mm",
+                "mn",
+                "mo",
+                "mp",
+                "mq",
+                "mr",
+                "ms",
+                "mt",
+                "mu",
+                "mv",
+                "mw",
+                "mx",
+                "my",
+                "mz",
+                "na",
+                "nc",
+                "ne",
+                "nf",
+                "ng",
+                "ni",
+                "nl",
+                "no",
+                "np",
+                "nr",
+                "nu",
+                "nz",
+                "om",
+                "pa",
+                "pe",
+                "pf",
+                "pg",
+                "ph",
+                "pk",
+                "pl",
+                "pm",
+                "pn",
+                "pr",
+                "ps",
+                "pt",
+                "pw",
+                "py",
+                "qa",
+                "re",
+                "ro",
+                "rs",
+                "ru",
+                "rw",
+                "sa",
+                "sb",
+                "sc",
+                "sd",
+                "se",
+                "sg",
+                "sh",
+                "si",
+                "sj",
+                "sk",
+                "sl",
+                "sm",
+                "sn",
+                "so",
+                "sr",
+                "st",
+                "su",
+                "sv",
+                "sy",
+                "sz",
+                "tc",
+                "td",
+                "tf",
+                "tg",
+                "th",
+                "tj",
+                "tk",
+                "tl",
+                "tm",
+                "tn",
+                "to",
+                "tp",
+                "tr",
+                "tt",
+                "tv",
+                "tw",
+                "tz",
+                "ua",
+                "ug",
+                "uk",
+                "um",
+                "us",
+                "uy",
+                "uz",
+                "va",
+                "vc",
+                "ve",
+                "vg",
+                "vi",
+                "vn",
+                "vu",
+                "wf",
+                "ws",
+                "ye",
+                "yt",
+                "yu",
+                "za",
+                "zm",
+                "zr",
+                "zw"
+              ]
+            },
+            "fr_stem_filter" : {
+              "name" : "minimal_french",
+              "type" : "stemmer"
+            },
+            "it_stem_filter" : {
+              "name" : "light_italian",
+              "type" : "stemmer"
+            },
+            "de_stem_filter" : {
+              "name" : "minimal_german",
+              "type" : "stemmer"
+            },
+            "en_stem_filter" : {
+              "name" : "minimal_english",
+              "type" : "stemmer"
+            },
+            "host_delimiter_filter2" : {
+              "type" : "pattern_capture",
+              "preserve_original" : "true",
+              "patterns" : [
+                "([^\\.]+)"
+              ]
+            },
+            "host_delimiter_filter1" : {
+              "split_on_numerics" : "false",
+              "generate_word_parts" : "true",
+              "preserve_original" : "true",
+              "catenate_words" : "true",
+              "type" : "word_delimiter_graph",
+              "catenate_numbers" : "true",
+              "stem_english_possessive" : "true"
+            },
+            "fi_stem_filter" : {
+              "name" : "light_finish",
+              "type" : "stemmer"
+            },
+            "ja_pos_filter" : {
+              "type" : "kuromoji_part_of_speech",
+              "stoptags" : [
+                """\u52a9\u8a5e-\u683c\u52a9\u8a5e-\u4e00\u822c""",
+                """\u52a9\u8a5e-\u7d42\u52a9\u8a5e"""
+              ]
+            },
+            "es_stem_filter" : {
+              "name" : "light_spanish",
+              "type" : "stemmer"
+            },
+            "hu_stem_filter" : {
+              "name" : "light_hungarian",
+              "type" : "stemmer"
+            },
+            "host_pre_filter" : {
+              "type" : "pattern_capture",
+              "preserve_original" : "false",
+              "patterns" : [
+                """^(?:www\d?\.)(.+\..+)$"""
+              ]
+            },
+            "pl_stem_filter" : {
+              "name" : "polish_stop",
+              "type" : "stop"
+            },
+            "pt_stem_filter" : {
+              "name" : "minimal_portuguese",
+              "type" : "stemmer"
+            },
+            "ru_stem_filter" : {
+              "name" : "light_russian",
+              "type" : "stemmer"
+            },
+            "sv_stem_filter" : {
+              "name" : "light_swedish",
+              "type" : "stemmer"
+            }
+          },
+          "analyzer" : {
+            "de_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "de_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "ar_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "host_analyzer" : {
+              "filter" : [
+                "host_pre_filter",
+                "host_delimiter_filter1",
+                "host_delimiter_filter2",
+                "host_delimiter_filter1",
+                "host_stop_filter",
+                "en_stem_filter",
+                "unique"
+              ],
+              "type" : "custom",
+              "tokenizer" : "whitespace"
+            },
+            "bg_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "fr_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "elision",
+                "fr_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "it_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "it_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "cs_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "meta_keyword_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "meta_keyword_tokenizer"
+            },
+            "nl_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "hu_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "hu_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "no_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "pl_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "da_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "es_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "es_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "th_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "ru_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "ru_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "en_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "en_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "fa_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "ko_analyzer" : {
+              "type" : "cjk"
+            },
+            "lt_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "lowercase_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "keyword"
+            },
+            "sv_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "sv_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "pt_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "pt_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "ro_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "tr_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "path_analyzer" : {
+              "type" : "custom",
+              "tokenizer" : "path_tokenizer"
+            },
+            "el_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "ja_analyzer" : {
+              "filter" : [
+                "kuromoji_baseform",
+                "ja_pos_filter",
+                "icu_normalizer",
+                "icu_folding",
+                "cjk_width"
+              ],
+              "type" : "custom",
+              "tokenizer" : "kuromoji_tokenizer"
+            },
+            "fi_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "fi_stem_filter",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "default_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "query_analyzer" : {
+              "type" : "custom",
+              "tokenizer" : "query_tokenizer"
+            },
+            "ca_analyzer" : {
+              "filter" : [
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "icu_tokenizer"
+            },
+            "zh_analyzer" : {
+              "filter" : [
+                "smartcn_word",
+                "icu_normalizer",
+                "icu_folding"
+              ],
+              "type" : "custom",
+              "tokenizer" : "smartcn_sentence"
+            }
+          },
+          "tokenizer" : {
+            "meta_keyword_tokenizer" : {
+              "pattern" : "[, \\t]",
+              "type" : "pattern"
+            },
+            "query_tokenizer" : {
+              "pattern" : "[&=]",
+              "type" : "pattern"
+            },
+            "path_tokenizer" : {
+              "type" : "path_hierarchy",
+              "delimiter" : "/"
+            }
+          }
+        },
+        "number_of_replicas" : "2"
+      }
+    },
+      "mappings" : {
+      "_source" : {
+        "excludes" : [
+          "warc_target_query_string",
+          "full_body_*",
+          "headings_*"
+        ]
+      },
+      "dynamic_templates" : [
+        {
+          "ar" : {
+            "path_match" : "*_lang.ar",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "ar_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "bg" : {
+            "path_match" : "*_lang.bg",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "bg_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "ca" : {
+            "path_match" : "*_lang.ca",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "ca_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "cs" : {
+            "path_match" : "*_lang.cs",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "cs_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "da" : {
+            "path_match" : "*_lang.da",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "da_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "de" : {
+            "path_match" : "*_lang.de",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "de_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "el" : {
+            "path_match" : "*_lang.el",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "el_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "en" : {
+            "path_match" : "*_lang.en",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "en_analyzer",
+              "fields": {
+                        "simLMJ": {
+                          "type": "text",
+                          "similarity": "lmj"
+                        },
+                        "simLMD": {
+                          "type": "text",
+                          "similarity": "lmd"
+                        },
+                        "simDFR": {
+                          "type": "text",
+                          "similarity": "dfr"
+                        },
+                        "simTFIDF": {
+                          "type": "text",
+                          "similarity": "scripted_tfidf"
+                        },
+                        "simDFI": {
+              			   	"type": "text",
+              				"similarity": "dfi"
+            			},
+            			"simIB": {
+              				"type": "text",
+              				"similarity": "ib"
+            			}
+              },
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "es" : {
+            "path_match" : "*_lang.es",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "es_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "fa" : {
+            "path_match" : "*_lang.fa",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "fa_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "fi" : {
+            "path_match" : "*_lang.fi",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "fi_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "fr" : {
+            "path_match" : "*_lang.fr",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "fr_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "hu" : {
+            "path_match" : "*_lang.hu",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "hu_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "it" : {
+            "path_match" : "*_lang.it",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "it_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "ja" : {
+            "path_match" : "*_lang.ja",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "ja_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "ko" : {
+            "path_match" : "*_lang.ko",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "ko_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "lt" : {
+            "path_match" : "*_lang.lt",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "lt_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "nl" : {
+            "path_match" : "*_lang.nl",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "nl_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "no" : {
+            "path_match" : "*_lang.no",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "no_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "pl" : {
+            "path_match" : "*_lang.pl",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "pl_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "pt" : {
+            "path_match" : "*_lang.pt",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "pt_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "ro" : {
+            "path_match" : "*_lang.ro",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "ro_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "ru" : {
+            "path_match" : "*_lang.ru",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "ru_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "sv" : {
+            "path_match" : "*_lang.sv",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "sv_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "th" : {
+            "path_match" : "*_lang.th",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "th_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "tr" : {
+            "path_match" : "*_lang.tr",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "tr_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "zh" : {
+            "path_match" : "*_lang.zh",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "zh_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        },
+        {
+          "unknown" : {
+            "path_match" : "*_lang.unknown",
+            "match_mapping_type" : "string",
+            "mapping" : {
+              "analyzer" : "default_analyzer",
+              "similarity" : "BM25",
+              "type" : "text"
+            }
+          }
+        }
+      ],
+      "properties" : {
+        "anchor_texts_lang" : {
+          "properties" : {
+            "ar" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ar_analyzer"
+            },
+            "bg" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "bg_analyzer"
+            },
+            "ca" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ca_analyzer"
+            },
+            "cs" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "cs_analyzer"
+            },
+            "da" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "da_analyzer"
+            },
+            "de" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "de_analyzer"
+            },
+            "el" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "el_analyzer"
+            },
+            "en" : {
+              "type" : "text",
+              "fields": {
+                        "simLMJ": {
+                          "type": "text",
+                          "similarity": "lmj"
+                        },
+                        "simLMD": {
+                          "type": "text",
+                          "similarity": "lmd"
+                        },
+                        "simDFR": {
+                          "type": "text",
+                          "similarity": "dfr"
+                        },
+                        "simTFIDF": {
+                          "type": "text",
+                          "similarity": "scripted_tfidf"
+                        },
+                        "simDFI": {
+              			   	"type": "text",
+              				"similarity": "dfi"
+            			},
+            			"simIB": {
+              				"type": "text",
+              				"similarity": "ib"
+            			}
+              },
+              "analyzer" : "en_analyzer"
+            },
+            "eo" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "es" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "es_analyzer"
+            },
+            "fa" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fa_analyzer"
+            },
+            "fi" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fi_analyzer"
+            },
+            "fr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fr_analyzer"
+            },
+            "hr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "hu" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "hu_analyzer"
+            },
+            "in" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "it" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "it_analyzer"
+            },
+            "iw" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "ja" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ja_analyzer"
+            },
+            "lt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "lt_analyzer"
+            },
+            "nl" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "nl_analyzer"
+            },
+            "no" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "no_analyzer"
+            },
+            "pt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "pt_analyzer"
+            },
+            "ro" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ro_analyzer"
+            },
+            "ru" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ru_analyzer"
+            },
+            "sk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sl" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "th" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "th_analyzer"
+            },
+            "tr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "tr_analyzer"
+            },
+            "uk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "vi" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            }
+          }
+        },
+        "body_lang" : {
+          "properties" : {
+            "ar" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ar_analyzer"
+            },
+            "bg" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "bg_analyzer"
+            },
+            "ca" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ca_analyzer"
+            },
+            "cs" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "cs_analyzer"
+            },
+            "da" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "da_analyzer"
+            },
+            "de" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "de_analyzer"
+            },
+            "el" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "el_analyzer"
+            },
+            "en" : {
+              "type" : "text",
+              "fields": {
+                        "simLMJ": {
+                          "type": "text",
+                          "similarity": "lmj"
+                        },
+                        "simLMD": {
+                          "type": "text",
+                          "similarity": "lmd"
+                        },
+                        "simDFR": {
+                          "type": "text",
+                          "similarity": "dfr"
+                        },
+                        "simTFIDF": {
+                          "type": "text",
+                          "similarity": "scripted_tfidf"
+                        },
+                        "simDFI": {
+              			   	"type": "text",
+              				"similarity": "dfi"
+            			},
+            			"simIB": {
+              				"type": "text",
+              				"similarity": "ib"
+            			}
+              },
+              "analyzer" : "en_analyzer"
+            },
+            "eo" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "es" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "es_analyzer"
+            },
+            "fa" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fa_analyzer"
+            },
+            "fi" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fi_analyzer"
+            },
+            "fr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fr_analyzer"
+            },
+            "hr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "hu" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "hu_analyzer"
+            },
+            "in" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "it" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "it_analyzer"
+            },
+            "iw" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "ja" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ja_analyzer"
+            },
+            "ko" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ko_analyzer"
+            },
+            "lt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "lt_analyzer"
+            },
+            "nl" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "nl_analyzer"
+            },
+            "no" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "no_analyzer"
+            },
+            "pt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "pt_analyzer"
+            },
+            "ro" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ro_analyzer"
+            },
+            "ru" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ru_analyzer"
+            },
+            "sk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sl" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "th" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "th_analyzer"
+            },
+            "tr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "tr_analyzer"
+            },
+            "uk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "vi" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "zh" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "zh_analyzer"
+            }
+          }
+        },
+        "body_length" : {
+          "type" : "long"
+        },
+        "content_type" : {
+          "type" : "keyword"
+        },
+        "date" : {
+          "type" : "date",
+          "format" : "date_optional_time"
+        },
+        "full_body_lang" : {
+          "properties" : {
+            "ar" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ar_analyzer"
+            },
+            "bg" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "bg_analyzer"
+            },
+            "ca" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ca_analyzer"
+            },
+            "cs" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "cs_analyzer"
+            },
+            "da" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "da_analyzer"
+            },
+            "de" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "de_analyzer"
+            },
+            "el" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "el_analyzer"
+            },
+            "en" : {
+              "type" : "text",
+              "fields": {
+                        "simLMJ": {
+                          "type": "text",
+                          "similarity": "lmj"
+                        },
+                        "simLMD": {
+                          "type": "text",
+                          "similarity": "lmd"
+                        },
+                        "simDFR": {
+                          "type": "text",
+                          "similarity": "dfr"
+                        },
+                        "simTFIDF": {
+                          "type": "text",
+                          "similarity": "scripted_tfidf"
+                        },
+                        "simDFI": {
+              			   	"type": "text",
+              				"similarity": "dfi"
+            			},
+            			"simIB": {
+              				"type": "text",
+              				"similarity": "ib"
+            			}
+              },
+              "analyzer" : "en_analyzer"
+            },
+            "eo" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "es" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "es_analyzer"
+            },
+            "fa" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fa_analyzer"
+            },
+            "fi" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fi_analyzer"
+            },
+            "fr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fr_analyzer"
+            },
+            "hr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "hu" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "hu_analyzer"
+            },
+            "in" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "it" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "it_analyzer"
+            },
+            "iw" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "ja" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ja_analyzer"
+            },
+            "ko" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ko_analyzer"
+            },
+            "lt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "lt_analyzer"
+            },
+            "nl" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "nl_analyzer"
+            },
+            "no" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "no_analyzer"
+            },
+            "pt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "pt_analyzer"
+            },
+            "ro" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ro_analyzer"
+            },
+            "ru" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ru_analyzer"
+            },
+            "sk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sl" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "th" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "th_analyzer"
+            },
+            "tr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "tr_analyzer"
+            },
+            "uk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "vi" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "zh" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "zh_analyzer"
+            }
+          }
+        },
+        "headings_lang" : {
+          "properties" : {
+            "ar" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ar_analyzer"
+            },
+            "bg" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "bg_analyzer"
+            },
+            "ca" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ca_analyzer"
+            },
+            "cs" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "cs_analyzer"
+            },
+            "da" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "da_analyzer"
+            },
+            "de" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "de_analyzer"
+            },
+            "el" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "el_analyzer"
+            },
+            "en" : {
+              "type" : "text",
+              "fields": {
+                        "simLMJ": {
+                          "type": "text",
+                          "similarity": "lmj"
+                        },
+                        "simLMD": {
+                          "type": "text",
+                          "similarity": "lmd"
+                        },
+                        "simDFR": {
+                          "type": "text",
+                          "similarity": "dfr"
+                        },
+                        "simTFIDF": {
+                          "type": "text",
+                          "similarity": "scripted_tfidf"
+                        },
+                        "simDFI": {
+              			   	"type": "text",
+              				"similarity": "dfi"
+            			},
+            			"simIB": {
+              				"type": "text",
+              				"similarity": "ib"
+            			}
+              },
+              "analyzer" : "en_analyzer"
+            },
+            "eo" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "es" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "es_analyzer"
+            },
+            "fa" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fa_analyzer"
+            },
+            "fi" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fi_analyzer"
+            },
+            "fr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fr_analyzer"
+            },
+            "hr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "hu" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "hu_analyzer"
+            },
+            "in" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "it" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "it_analyzer"
+            },
+            "iw" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "ja" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ja_analyzer"
+            },
+            "ko" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ko_analyzer"
+            },
+            "lt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "lt_analyzer"
+            },
+            "nl" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "nl_analyzer"
+            },
+            "no" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "no_analyzer"
+            },
+            "pt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "pt_analyzer"
+            },
+            "ro" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ro_analyzer"
+            },
+            "ru" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ru_analyzer"
+            },
+            "sk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sl" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "th" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "th_analyzer"
+            },
+            "tr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "tr_analyzer"
+            },
+            "uk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "vi" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "zh" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "zh_analyzer"
+            }
+          }
+        },
+        "lang" : {
+          "type" : "keyword"
+        },
+        "meta_desc_lang" : {
+          "properties" : {
+            "ar" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ar_analyzer"
+            },
+            "bg" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "bg_analyzer"
+            },
+            "ca" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ca_analyzer"
+            },
+            "cs" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "cs_analyzer"
+            },
+            "da" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "da_analyzer"
+            },
+            "de" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "de_analyzer"
+            },
+            "el" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "el_analyzer"
+            },
+            "en" : {
+              "type" : "text",
+              "fields": {
+                        "simLMJ": {
+                          "type": "text",
+                          "similarity": "lmj"
+                        },
+                        "simLMD": {
+                          "type": "text",
+                          "similarity": "lmd"
+                        },
+                        "simDFR": {
+                          "type": "text",
+                          "similarity": "dfr"
+                        },
+                        "simTFIDF": {
+                          "type": "text",
+                          "similarity": "scripted_tfidf"
+                        },
+                        "simDFI": {
+              			   	"type": "text",
+              				"similarity": "dfi"
+            			},
+            			"simIB": {
+              				"type": "text",
+              				"similarity": "ib"
+            			}
+              },
+              "analyzer" : "en_analyzer"
+            },
+            "eo" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "es" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "es_analyzer"
+            },
+            "fa" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fa_analyzer"
+            },
+            "fi" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fi_analyzer"
+            },
+            "fr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fr_analyzer"
+            },
+            "hr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "hu" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "hu_analyzer"
+            },
+            "in" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "it" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "it_analyzer"
+            },
+            "iw" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "ja" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ja_analyzer"
+            },
+            "ko" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ko_analyzer"
+            },
+            "lt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "lt_analyzer"
+            },
+            "nl" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "nl_analyzer"
+            },
+            "no" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "no_analyzer"
+            },
+            "pt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "pt_analyzer"
+            },
+            "ro" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ro_analyzer"
+            },
+            "ru" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ru_analyzer"
+            },
+            "sk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sl" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "th" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "th_analyzer"
+            },
+            "tr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "tr_analyzer"
+            },
+            "uk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "vi" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "zh" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "zh_analyzer"
+            }
+          }
+        },
+        "meta_keywords" : {
+          "type" : "text",
+          "fields": {
+                        "simLMJ": {
+                          "type": "text",
+                          "similarity": "lmj"
+                        },
+                        "simLMD": {
+                          "type": "text",
+                          "similarity": "lmd"
+                        },
+                        "simDFR": {
+                          "type": "text",
+                          "similarity": "dfr"
+                        },
+                        "simTFIDF": {
+                          "type": "text",
+                          "similarity": "scripted_tfidf"
+                        },
+                        "simDFI": {
+              			   	"type": "text",
+              				"similarity": "dfi"
+            			},
+            			"simIB": {
+              				"type": "text",
+              				"similarity": "ib"
+            			}
+              },
+          "analyzer" : "meta_keyword_analyzer"
+        },
+        "page_rank" : {
+          "type" : "float"
+        },
+        "spam_rank" : {
+          "type" : "byte"
+        },
+        "title_lang" : {
+          "properties" : {
+            "ar" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ar_analyzer"
+            },
+            "bg" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "bg_analyzer"
+            },
+            "ca" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ca_analyzer"
+            },
+            "cs" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "cs_analyzer"
+            },
+            "da" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "da_analyzer"
+            },
+            "de" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "de_analyzer"
+            },
+            "el" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "el_analyzer"
+            },
+            "en" : {
+              "type" : "text",
+              "fields": {
+                        "simLMJ": {
+                          "type": "text",
+                          "similarity": "lmj"
+                        },
+                        "simLMD": {
+                          "type": "text",
+                          "similarity": "lmd"
+                        },
+                        "simDFR": {
+                          "type": "text",
+                          "similarity": "dfr"
+                        },
+                        "simTFIDF": {
+                          "type": "text",
+                          "similarity": "scripted_tfidf"
+                        },
+                        "simDFI": {
+              			   	"type": "text",
+              				"similarity": "dfi"
+            			},
+            			"simIB": {
+              				"type": "text",
+              				"similarity": "ib"
+            			}
+              },
+              "analyzer" : "en_analyzer"
+            },
+            "eo" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "es" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "es_analyzer"
+            },
+            "fa" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fa_analyzer"
+            },
+            "fi" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fi_analyzer"
+            },
+            "fr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "fr_analyzer"
+            },
+            "hr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "hu" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "hu_analyzer"
+            },
+            "in" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "it" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "it_analyzer"
+            },
+            "iw" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "ja" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ja_analyzer"
+            },
+            "ko" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ko_analyzer"
+            },
+            "lt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "lt_analyzer"
+            },
+            "nl" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "nl_analyzer"
+            },
+            "no" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "no_analyzer"
+            },
+            "pt" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "pt_analyzer"
+            },
+            "ro" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ro_analyzer"
+            },
+            "ru" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "ru_analyzer"
+            },
+            "sk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sl" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "sr" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "th" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "th_analyzer"
+            },
+            "tr" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "tr_analyzer"
+            },
+            "uk" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "vi" : {
+              "type" : "text",
+              "fields" : {
+                "keyword" : {
+                  "type" : "keyword",
+                  "ignore_above" : 256
+                }
+              }
+            },
+            "zh" : {
+              "type" : "text",
+              "similarity" : "BM25",
+              "analyzer" : "zh_analyzer"
+            }
+          }
+        },
+        "title_lang_en_sent_embedding": {
+          "type": "dense_vector",
+          "dims": 512
+        },
+        "body_lang_en_sent_embedding": {
+          "type": "dense_vector",
+          "dims": 512
+        },
+        "warc_record_id" : {
+          "type" : "keyword"
+        },
+        "warc_target_hostname" : {
+          "type" : "text",
+          "similarity" : "BM25",
+          "fields" : {
+            "raw" : {
+              "type" : "keyword"
+            }
+          },
+          "analyzer" : "host_analyzer"
+        },
+        "warc_target_path" : {
+          "type" : "text",
+          "similarity" : "BM25",
+          "fields" : {
+            "raw" : {
+              "type" : "keyword"
+            }
+          },
+          "analyzer" : "path_analyzer"
+        },
+        "warc_target_query_string" : {
+          "type" : "text",
+          "similarity" : "BM25",
+          "analyzer" : "query_analyzer"
+        },
+        "warc_target_uri" : {
+          "type" : "keyword"
+        },
+        "warc_trec_id" : {
+          "type" : "keyword"
+        }
+      } 
+  }  
+}
