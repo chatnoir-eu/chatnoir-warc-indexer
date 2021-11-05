@@ -1,3 +1,4 @@
+from base64 import b64encode
 from calendar import monthrange
 import itertools
 import logging
@@ -15,6 +16,7 @@ from elasticsearch.exceptions import TransportError
 from elasticsearch.helpers import BulkIndexError, streaming_bulk
 from elasticsearch_dsl import connections
 from pyspark import SparkConf, SparkContext
+from resiliparse.parse.html import NodeType
 
 
 logger = logging.getLogger()
@@ -97,7 +99,7 @@ def hadoop_api(spark_context):
     return spark_context._jvm.org.apache.hadoop
 
 
-def get_webis_uuid(corpus_prefix, internal_id):
+def webis_uuid(corpus_prefix, internal_id):
     """
     Calculate a Webis document UUID based on a corpus prefix and
     an internal (not necessarily universally unique) doc ID.
@@ -106,7 +108,7 @@ def get_webis_uuid(corpus_prefix, internal_id):
     :param internal_id: internal doc ID (e.g., clueweb09-en0044-22-32198)
     :return: Webis UUID
     """
-    return uuid.uuid5(uuid.NAMESPACE_URL, ':'.join((corpus_prefix, internal_id)))
+    return b64encode(uuid.uuid5(uuid.NAMESPACE_URL, ':'.join((corpus_prefix, internal_id))).bytes)
 
 
 def clip_warc_date(date_val):
@@ -122,6 +124,85 @@ def clip_warc_date(date_val):
 
     return re.sub(r'(\d{4})-(\d{2})-(\d+)',
                   lambda g: '{}-{}-{}'.format(g.group(1), g.group(2), c(g.group(1), g.group(2), g.group(3))), date_val)
+
+
+def get_full_body_text_content(html_tree):
+    """
+    Returns the document's visible plaintext content as a single string.
+
+    :param html_tree: Resiliparse HTML tree
+    :return: text contents
+    """
+
+    def node_to_text(node):
+        if node.type != NodeType.TEXT and node.hasattr('alt'):
+            return node['alt']
+        return node.text.strip()
+
+    return ' '.join(node_to_text(e) for e in html_tree.body
+                    if e.type == NodeType.TEXT or e.hasattr('alt')
+                    and e.text.strip()
+                    and e.parent.tag not in ['script', 'style'])
+
+
+def get_document_title(html_tree):
+    """
+    Intelligently try to extract a document title.
+
+    :param html_tree: Resiliparse HTML tree
+    :return: title
+    """
+    title = html_tree.title.strip()
+    if title:
+        return title
+
+    h1 = html_tree.body.query_selector('h1')
+    if h1 and h1.text:
+        return h1.text
+
+    h2 = html_tree.body.query_selector('h2')
+    if h2 and h2.text:
+        return h2.text
+
+    title_cls = html_tree.body.query_selector('.title')
+    if title_cls:
+        return title_cls.text
+
+    return ''
+
+
+def get_document_meta_desc(html_tree):
+    """
+    Get document meta description
+
+    :param html_tree: Resiliparse HTML tree
+    :return: meta description
+    """
+    if not html_tree.head:
+        return ''
+
+    desc = html_tree.head.query_selector('meta[name="description"]')
+    if not desc:
+        return ''
+
+    return desc.getattr('content', '').strip()
+
+
+def get_document_meta_keywords(html_tree):
+    """
+    Get document meta keywords as list
+
+    :param html_tree: Resiliparse HTML tree
+    :return: meta keywords
+    """
+    if not html_tree.head:
+        return []
+
+    keywords = html_tree.head.query_selector('meta[name="keywords"]')
+    if not keywords:
+        return []
+
+    return [k.strip() for k in keywords.getattr('content', '').split(',')]
 
 
 def bulk_index_partition(partition, es, chunk_size=400, batch_size=None, max_retries=10,
