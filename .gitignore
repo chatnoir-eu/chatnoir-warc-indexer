@@ -3,7 +3,7 @@
 
 
 ### Config files
-src/conf/local_config.py
+warc_indexer/conf/local_config.py
 
 ### Python
 *.log

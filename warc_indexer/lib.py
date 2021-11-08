@@ -11,6 +11,7 @@ import time
 from zipfile import ZipFile
 
 import boto3
+import boto3.resources.base
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import TransportError
 from elasticsearch.helpers import BulkIndexError, streaming_bulk
@@ -72,7 +73,7 @@ def init_es_connection():
         })
 
 
-def get_s3_resource():
+def get_s3_resource() -> boto3.resources.base.ServiceResource:
     """
     :return: configured S3 resource
     """
@@ -203,6 +204,21 @@ def get_document_meta_keywords(html_tree):
         return []
 
     return [k.strip() for k in keywords.getattr('content', '').split(',')]
+
+
+def get_document_headings(html_tree, max_level=3):
+    """
+    Get a list of document headings up to a certain level
+
+    :param html_tree: Resiliparse HTML tree
+    :param max_level: maximum heading level to extract
+    :return: list of headings
+    """
+    if not html_tree.head:
+        return []
+
+    headings = html_tree.head.query_selector_all(', '.join(f'h{i}' for i in range(1, max_level + 1)))
+    return [k.text.strip() for k in headings]
 
 
 def bulk_index_partition(partition, es, chunk_size=400, batch_size=None, max_retries=10,
