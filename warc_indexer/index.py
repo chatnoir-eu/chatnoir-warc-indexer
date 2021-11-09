@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-
-from functools import partial
 import logging
 import os
 import re
+import sys
 from typing import Dict
 from urllib.parse import urlparse
 import uuid
@@ -11,9 +10,9 @@ import uuid
 import apache_beam as beam
 import boto3
 from apache_beam.options.pipeline_options import PipelineOptions
-from apache_beam.options.pipeline_options import S3Options
 import click
 from elasticsearch import Elasticsearch
+from elasticsearch.exceptions import TransportError
 import html2text
 from fastwarc.warc import ArchiveIterator, WarcRecord, WarcRecordType
 from resiliparse.parse.encoding import bytes_to_str, detect_encoding
@@ -22,8 +21,8 @@ from resiliparse.parse.lang import detect_fast as lang_detect_fast
 
 import es_utils
 import lib
-import warc
-from warc import WarcSource
+from warc_source import WarcSource
+from time import monotonic
 
 
 logger = logging.getLogger()
@@ -51,39 +50,64 @@ def uuid_prefix_partitioner(key, num_partitions):
 
 
 @main.command()
-@click.argument('s3-prefix')
 @click.argument('meta-index')
-@click.argument('content-index')
-@click.argument('doc-id-prefix')
-# @click.option('-b', '--batch-size', type=int, default=1000, show_default=True,
-#               help='Number of input files to process in one batch (last batch may be larger by up to 50%).')
-# @click.option('-f', '--path-filter', type=str, default='', help='Input path prefix filter')
-# @click.option('-c', '--chunk-size', type=int, default=400, show_default=True, help='Chunk size of documents to index')
-# @click.option('-p', '--index-parallelism', type=int, default=130, show_default=True,
-#               help='Number of partitions for indexing (should be smaller or equal number of workers)')
-def index(s3_prefix, meta_index, content_index, doc_id_prefix):
+@click.argument('data-index')
+@click.option('--shards-meta', help='Number of shards for meta index', type=int, default=10, show_default=True)
+@click.option('--shards-data', help='Number of shards for data index', type=int, default=40, show_default=True)
+@click.option('--replicas', help='Number of replicas for indexing (should be 0 or 1)',
+              type=int, default=1, show_default=True)
+def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
     """
-    Index offsets of WARC documents into Elasticsearch.
+    Set up meta data and data indices if they don't already exist.
+    """
+    click.echo('Setting up indices if the do not exist.')
+
+    import conf.data_index
+    import conf.meta_index
+
+    conf.meta_index.SETTINGS.update(dict(number_of_shards=shards_meta, number_of_replicas=replicas))
+    conf.data_index.SETTINGS.update(dict(number_of_shards=shards_data, number_of_replicas=replicas))
+
+    try:
+        es_client = es_utils.get_client(**lib.get_config()['elasticsearch'])
+        es_utils.ensure_index(es_client, data_index, conf.data_index.SETTINGS, conf.data_index.MAPPING)
+        es_utils.ensure_index(es_client, meta_index, conf.meta_index.SETTINGS, conf.meta_index.MAPPING)
+    except TransportError as e:
+        click.echo(f'ERROR: {e.error}', err=True)
+        if len(e.args) > 2:
+            click.echo(e.args[2]["error"]["root_cause"][0]["reason"], err=True)
+
+
+@main.command(context_settings=dict(
+    ignore_unknown_options=True
+))
+@click.argument('input-glob')
+@click.argument('meta-index')
+@click.argument('data-index')
+@click.argument('id-prefix')
+@click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
+def index(input_glob, meta_index, data_index, id_prefix, beam_args):
+    """
+    Index WARC contents.
+
+    WARC records from``INPUT_GLOB`` will be index to index ``DATA_INDEX`` with WARC metadata
+    and offsets indexed to ``META_INDEX``.
+
+    ``ID_PREFIX`` is used for calculating document UUIDs.
     """
 
-    logger.info('Creating indices if the do not exist.')
-    # import conf.data_index
-    # import conf.meta_index
-    # es_utils.ensure_index(content_index, conf.data_index.SETTINGS, conf.data_index.MAPPING)
-    # es_utils.ensure_index(meta_index, conf.meta_index.SETTINGS, conf.meta_index.MAPPING)
+    sys.argv[1:] = beam_args
+    options = PipelineOptions(**lib.get_config()['pipeline_opts'])
 
-    # s3 = lib.get_s3_resource()
-    logger.debug('Retrieving input file list...')
-    # file_list = list(o.key for o in s3.Bucket(s3_bucket).objects.filter(Prefix=path_filter))
-
-
-    options = S3Options(**lib.get_config()['s3'])
-    # options.S3Options
-    with beam.Pipeline(options=PipelineOptions()) as pipeline:
+    click.echo(f'Starting pipeline to index "{input_glob}"...')
+    start = monotonic()
+    with beam.Pipeline(options=options) as pipeline:
         indexed = (
             pipeline
-            | WarcSource('s3://corpus-commoncrawl-main-2017-22/crawl-data/CC-MAIN-2017-22/segments/1495463615105.83/warc/CC-MAIN-20170530124450-20170530144450-00511.warc.gz')
+            | beam.io.Read(WarcSource(input_glob))
         )
+
+    click.echo(f'Time taken: {monotonic() - start:.2f}s')
 
     #
     # s3 = lib.get_s3_resource()

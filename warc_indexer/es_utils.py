@@ -140,6 +140,3 @@ def ensure_index(client: Elasticsearch, name: str, index_settings: Dict[str, str
             settings=index_settings,
             mappings=mapping
         ))
-    else:
-        client.indices.put_settings(body=index_settings, index=name)
-        client.indices.put_mapping(body=mapping, index=name)

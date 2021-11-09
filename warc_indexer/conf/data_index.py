@@ -69,7 +69,7 @@ MAPPING = {
     },
     "dynamic_templates": [
         {
-            "ar": {
+            "lang_ar": {
                 "path_match": "*_lang_ar",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -80,7 +80,7 @@ MAPPING = {
             }
         },
         {
-            "bg": {
+            "lang_bg": {
                 "path_match": "*_lang_bg",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -91,7 +91,7 @@ MAPPING = {
             }
         },
         {
-            "ca": {
+            "clang_ca": {
                 "path_match": "*_lang_ca",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -102,7 +102,7 @@ MAPPING = {
             }
         },
         {
-            "cs": {
+            "lang_cs": {
                 "path_match": "*_lang_cs",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -113,7 +113,7 @@ MAPPING = {
             }
         },
         {
-            "da": {
+            "lang_da": {
                 "path_match": "*_lang_da",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -124,7 +124,7 @@ MAPPING = {
             }
         },
         {
-            "de": {
+            "lang_de": {
                 "path_match": "*_lang_de",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -135,7 +135,7 @@ MAPPING = {
             }
         },
         {
-            "el": {
+            "lang_el": {
                 "path_match": "*_lang_el",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -146,7 +146,7 @@ MAPPING = {
             }
         },
         {
-            "en": {
+            "lang_en": {
                 "path_match": "*_lang_en",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -157,7 +157,7 @@ MAPPING = {
             }
         },
         {
-            "es": {
+            "lang_es": {
                 "path_match": "*_lang_es",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -168,7 +168,7 @@ MAPPING = {
             }
         },
         {
-            "fa": {
+            "lang_fa": {
                 "path_match": "*_lang_fa",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -179,7 +179,7 @@ MAPPING = {
             }
         },
         {
-            "fi": {
+            "lang_fi": {
                 "path_match": "*_lang_fi",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -190,7 +190,7 @@ MAPPING = {
             }
         },
         {
-            "fr": {
+            "lang_fr": {
                 "path_match": "*_lang_fr",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -201,7 +201,7 @@ MAPPING = {
             }
         },
         {
-            "hu": {
+            "lang_hu": {
                 "path_match": "*_lang_hu",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -212,7 +212,7 @@ MAPPING = {
             }
         },
         {
-            "it": {
+            "lang_it": {
                 "path_match": "*_lang_it",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -223,7 +223,7 @@ MAPPING = {
             }
         },
         {
-            "ja": {
+            "lang_ja": {
                 "path_match": "*_lang_ja",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -234,7 +234,7 @@ MAPPING = {
             }
         },
         {
-            "ko": {
+            "lang_ko": {
                 "path_match": "*_lang_ko",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -245,7 +245,7 @@ MAPPING = {
             }
         },
         {
-            "lt": {
+            "lang_lt": {
                 "path_match": "*_lang_lt",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -256,7 +256,7 @@ MAPPING = {
             }
         },
         {
-            "nl": {
+            "lang_nl": {
                 "path_match": "*_lang_nl",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -267,7 +267,7 @@ MAPPING = {
             }
         },
         {
-            "no": {
+            "lang_no": {
                 "path_match": "*_lang_no",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -278,7 +278,7 @@ MAPPING = {
             }
         },
         {
-            "pl": {
+            "lang_pl": {
                 "path_match": "*_lang_pl",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -289,7 +289,7 @@ MAPPING = {
             }
         },
         {
-            "pt": {
+            "lang_pt": {
                 "path_match": "*_lang_pt",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -300,7 +300,7 @@ MAPPING = {
             }
         },
         {
-            "ro": {
+            "lang_ro": {
                 "path_match": "*_lang_ro",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -311,7 +311,7 @@ MAPPING = {
             }
         },
         {
-            "ru": {
+            "lang_ru": {
                 "path_match": "*_lang_ru",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -322,7 +322,7 @@ MAPPING = {
             }
         },
         {
-            "sv": {
+            "lang_sv": {
                 "path_match": "*_lang_sv",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -333,7 +333,7 @@ MAPPING = {
             }
         },
         {
-            "th": {
+            "lang_th": {
                 "path_match": "*_lang_th",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -344,7 +344,7 @@ MAPPING = {
             }
         },
         {
-            "tr": {
+            "lang_tr": {
                 "path_match": "*_lang_tr",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -355,7 +355,7 @@ MAPPING = {
             }
         },
         {
-            "zh": {
+            "lang_zh": {
                 "path_match": "*_lang_zh",
                 "match_mapping_type": "string",
                 "mapping": {
@@ -366,7 +366,7 @@ MAPPING = {
             }
         },
         {
-            "unknown": {
+            "lang_unknown": {
                 "path_match": "*_lang_unknown",
                 "match_mapping_type": "string",
                 "mapping": {

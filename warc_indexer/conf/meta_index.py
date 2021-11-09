@@ -32,6 +32,8 @@ MAPPING = {
                     "type": "keyword"
                 }
             },
+        },
+        {
             "http_headers": {
                 "match": "http_*",
                 "match_mapping_type": "string",
