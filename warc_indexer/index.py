@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 import logging
 import os
-import re
 import sys
 from typing import Dict
 from urllib.parse import urlparse
 import uuid
 
 import apache_beam as beam
-import boto3
 from apache_beam.options.pipeline_options import PipelineOptions
 import click
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import TransportError
 import html2text
-from fastwarc.warc import ArchiveIterator, WarcRecord, WarcRecordType
+from fastwarc.warc import WarcRecord, WarcRecordType
 from resiliparse.parse.encoding import bytes_to_str, detect_encoding
 from resiliparse.parse.html import HTMLTree
 from resiliparse.parse.lang import detect_fast as lang_detect_fast
@@ -77,6 +75,11 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
         if len(e.args) > 2:
             click.echo(e.args[2]["error"]["root_cause"][0]["reason"], err=True)
 
+# CRASH
+# 152285988 <urn:uuid:1781ffb1-b8c4-4c6b-92a9-7f423f3c0241>
+# 152297725 <urn:uuid:b290f5a8-fc7a-4e28-afc8-14d3c1451f5b>
+# 152311349 <urn:uuid:8143f718-47d1-42e4-b6ed-c44156ad98ea>
+# 152321628 <urn:uuid:b8d83f46-51aa-4565-9ef5-04117d09476a>
 
 @main.command(context_settings=dict(
     ignore_unknown_options=True
@@ -102,40 +105,15 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args):
     click.echo(f'Starting pipeline to index "{input_glob}"...')
     start = monotonic()
     with beam.Pipeline(options=options) as pipeline:
-        indexed = (
+        (
             pipeline
-            | beam.io.Read(WarcSource(input_glob))
+            | 'Iterate WARCs' >> beam.io.Read(
+                    WarcSource(input_glob, warc_args=dict(record_types=int(WarcRecordType.response))))
+            | 'Process Records' >> beam.ParDo(ProcessRecord(id_prefix))
+            # | beam.Map(lambda x: print(x[1]['source_offset'], x[1]['warc_record_id']))
         )
 
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
-
-    #
-    # s3 = lib.get_s3_resource()
-    # logger.debug('Retrieving file list...')
-    # file_list = list(o.key for o in s3.Bucket(s3_bucket).objects.filter(Prefix=path_filter))
-    #
-    # logger.info('Retrieved file list.')
-    #
-    # # Avoid last batch being smaller than 0.5 * batch_size and append remainder to previous batch instead
-    # num_batches = int(len(file_list) / batch_size + 0.5)
-    #
-    # for i in range(num_batches):
-    #     logger.info('Starting batch {} of {}...'.format(i, num_batches))
-    #
-    #     slice_start = i * batch_size
-    #     slice_end = slice_start + batch_size if i + 1 < num_batches else len(file_list)
-    #
-    #     (sc.parallelize(file_list[slice_start:slice_end], numSlices=slice_end - slice_start)
-    #      .flatMap(partial(parse_warc_stream, doc_id_prefix=doc_id_prefix, bucket=s3_bucket))
-    #      .map(partial(parse_record, discard_content=False), preservesPartitioning=True)
-    #      .flatMap(partial(create_index_actions, meta_index=meta_index, content_index=content_index),
-    #               preservesPartitioning=True)
-    #      .repartitionAndSortWithinPartitions(index_parallelism,
-    #                                          partial(uuid_prefix_partitioner, num_partitions=index_parallelism))
-    #      .cache()
-    #      .foreachPartition(partial(index_partition, chunk_size=chunk_size)))
-    #
-    #     logger.info('Completed batch {}.'.format(i))
 
 
 class SkipRecord(Exception):
@@ -143,51 +121,50 @@ class SkipRecord(Exception):
 
 
 # noinspection PyAbstractClass
-class WarcIndexFn(beam.DoFn):
-    def __init__(self, es_client: Elasticsearch, s3_bucket: str, doc_id_prefix: str):
+class ProcessRecord(beam.DoFn):
+    def __init__(self, doc_id_prefix: str):
         super().__init__()
-        self.s3_bucket = s3_bucket
         self.doc_id_prefix = doc_id_prefix
-        self.es_client = es_client
 
     # noinspection PyMethodOverriding
-    def process(self, warc_name):
-        if not warc_name.endswith('.warc.gz'):
-            logger.warning('Skipping non-WARC file {}'.format(warc_name))
-            return []
+    def process(self, element):
+        """
+        Process WARC record.
 
-        warc = lib.get_s3_resource().Object(self.s3_bucket, warc_name).get()['Body']
-        for record in ArchiveIterator(warc, record_types=WarcRecordType.response):
-            doc_id = record.headers.get('WARC-Record-ID')
+        :param element: tuple of (file name, WARCRecord)
+        :return: tuple of (UUID, Metadata, Payload)
+        """
+        file_name, warc_record = element
+        doc_id = warc_record.headers.get('WARC-Record-ID')
 
-            if not record.headers.get('Content-Type', '').startswith('application/http'):
-                logger.info(f'Skipping document {doc_id}, reason: Not an HTTP response')
-                continue
+        if not warc_record.headers.get('Content-Type', '').startswith('application/http'):
+            logger.info(f'Skipping document {doc_id}, reason: Not an HTTP response')
+            return
 
-            if record.content_length > 1024 * 1024:
-                logger.info(f'Skipping document {doc_id}, reason: Document too short ({record.content_length} bytes)')
-                continue
+        if warc_record.content_length > 1024 * 1024:
+            logger.info(f'Skipping document {doc_id}, reason: Document too short ({warc_record.content_length} bytes)')
+            return
 
-            if record.content_length < 500:
-                logger.info(f'Skipping document {doc_id}, reason: Document too short ({record.content_length} bytes)')
-                continue
+        if warc_record.content_length < 500:
+            logger.info(f'Skipping document {doc_id}, reason: Document too short ({warc_record.content_length} bytes)')
+            return
 
-            doc_id = record.headers.get('WARC-TREC-ID', record.headers.get('WARC-Record-ID'))
-            webis_uuid = lib.webis_uuid(self.doc_id_prefix, doc_id)
-            content_bytes = record.reader.read()
+        doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
+        webis_uuid = lib.webis_uuid(self.doc_id_prefix, doc_id)
+        content_bytes = warc_record.reader.read()
 
-            try:
-                meta = self.create_metadata(warc_name, record, content_bytes)
-                payload = self.create_payload(meta, content_bytes)
-                yield webis_uuid, (meta, payload)
-            except SkipRecord as reason:
-                logger.info(f'Skipping document {doc_id}, reason: {reason}')
+        try:
+            meta = self.create_metadata(file_name, warc_record, content_bytes)
+            payload = self.create_payload(meta, content_bytes)
+            yield webis_uuid, meta, payload
+        except SkipRecord as reason:
+            logger.info(f'Skipping document {doc_id}, reason: {reason}')
 
-    def create_metadata(self, warc_name: str, warc_record: WarcRecord, content_bytes: bytes):
+    def create_metadata(self, file_name: str, warc_record: WarcRecord, content_bytes: bytes):
         """
         Parse WARC record into header dict and decoded content.
 
-        :param warc_name: WARC file name
+        :param file_name: WARC file name
         :param warc_record: WarcRecord instance (unconsumed, but with parsed HTTP)
         :param content_bytes: WarcRecord payload data as bytes
         :return: tuple of doc_uuid, (meta data, payload)
@@ -197,7 +174,7 @@ class WarcIndexFn(beam.DoFn):
         encoding = warc_record.http_charset or detect_encoding(content_bytes)
 
         meta = {
-            'source_file': warc_name,
+            'source_file': file_name,
             'source_offset': warc_record.stream_pos,
             **{h.replace('-', '_').lower(): v for h, v in warc_record.headers if h.startswith('WARC-')},
             'content_type': warc_record.headers.get('Content-Type'),
@@ -225,7 +202,10 @@ class WarcIndexFn(beam.DoFn):
         content_str = bytes_to_str(content_bytes, metadata['content_encoding'])
         lang = lang_detect_fast(content_str)
         parse_url = urlparse(metadata['warc_target_uri'])
-        html_tree = HTMLTree.parse(content_bytes)
+        html_tree = HTMLTree.parse(content_str)
+
+        if not html_tree.body:
+            raise SkipRecord('No body')
 
         index_doc = {
             'warc_record_id': metadata.get('warc_record_id'),
@@ -241,12 +221,12 @@ class WarcIndexFn(beam.DoFn):
         }
 
         plain_text = ''
-        try:
-            text_maker = html2text.HTML2Text()
-            text_maker.ignore_links = True
-            plain_text = text_maker.handle(str(html_tree.body))
-        except:
-            pass
+        # try:
+        #     text_maker = html2text.HTML2Text()
+        #     text_maker.ignore_links = True
+        #     plain_text = text_maker.handle(str(html_tree.body))
+        # except:
+        #     pass
 
         if len(plain_text) < 200:
             raise SkipRecord(f'Document too short ({len(plain_text)} codepoints)')
@@ -256,7 +236,7 @@ class WarcIndexFn(beam.DoFn):
             'meta_keywords': lib.get_document_meta_keywords(html_tree),
             f'meta_desc_lang_{lang}': lib.get_document_meta_desc(html_tree),
             f'body_lang_{lang}': plain_text,
-            f'full_body_lang_{lang}': re.sub(r'\s{2,}', ' ', lib.get_full_body_text_content(html_tree)),
+            f'full_body_lang_{lang}': lib.get_full_body_text_content(html_tree),
             f'headings_lang_{lang}': lib.get_document_headings(html_tree, 3)
         })
 

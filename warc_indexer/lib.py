@@ -136,14 +136,22 @@ def get_full_body_text_content(html_tree):
     """
 
     def node_to_text(node):
-        if node.type != NodeType.TEXT and node.hasattr('alt'):
+        if node.type == NodeType.ELEMENT and node.hasattr('alt'):
             return node['alt']
-        return node.text.strip()
+        return re.sub(r'\s+', ' ', node.text.strip())
 
-    return ' '.join(node_to_text(e) for e in html_tree.body
-                    if e.type == NodeType.TEXT or e.hasattr('alt')
-                    and e.text.strip()
-                    and e.parent.tag not in ['script', 'style'])
+    fragments = []
+    for e in html_tree.body:
+        if e.type != NodeType.TEXT and not (e.type == NodeType.ELEMENT and e.hasattr('alt')):
+            continue
+        if e.parent.tag in ['script', 'style']:
+            continue
+
+        text = node_to_text(e)
+        if text:
+            fragments.append(text)
+
+    return ' '.join(fragments)
 
 
 def get_document_title(html_tree):
