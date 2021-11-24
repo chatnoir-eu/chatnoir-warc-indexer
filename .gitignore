@@ -11,6 +11,7 @@ warc_indexer/conf/local_config.py
 *.pyc
 __pycache__/
 venv*/
+*.egg-info
 
 ### IDEs and temporary files
 .idea

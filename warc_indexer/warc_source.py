@@ -1,5 +1,7 @@
 import io
+import logging
 import sys
+import time
 
 from apache_beam.io.aws.s3io import S3IO, S3Downloader
 from apache_beam.io.aws.clients.s3 import boto3_client, messages
@@ -9,7 +11,11 @@ from apache_beam.io.filesystemio import DownloaderStream
 from apache_beam.io.filesystems import FileSystems
 from apache_beam.io.iobase import RangeTracker
 from apache_beam.options.value_provider import RuntimeValueProvider
+import apache_beam.transforms.window as window
+
 from fastwarc import warc
+
+logger = logging.getLogger()
 
 
 # noinspection PyAbstractClass
@@ -18,7 +24,7 @@ class WarcSource(FileBasedSource):
     WARC file input source.
     """
 
-    def __init__(self, file_pattern, validate=True, warc_args=None, freeze=False):
+    def __init__(self, file_pattern, validate=True, warc_args=None, freeze=True):
         """
         :param file_pattern: input file glob pattern
         :param validate: verify that file exists
@@ -55,7 +61,8 @@ class WarcSource(FileBasedSource):
                     break
                 if self.freeze:
                     record.freeze()
-                yield file_name, record
+
+                yield window.TimestampedValue((file_name, record), int(time.time()))
 
     def _open_file(self, file_name, start_offset):
         """Get input file stream."""

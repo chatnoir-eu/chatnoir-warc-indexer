@@ -1,10 +1,10 @@
 import logging
 import time
-from typing import Dict
 
 import apache_beam as beam
 import apache_beam.coders as coders
 import apache_beam.transforms.userstate as userstate
+import apache_beam.typehints.typehints as t
 from elasticsearch import Elasticsearch, TransportError
 from elasticsearch.helpers import BulkIndexError, streaming_bulk
 
@@ -14,8 +14,8 @@ logger = logging.getLogger()
 
 # noinspection PyAbstractClass
 class ElasticSearchBulkSink(beam.DoFn):
-    BUFFER_STATE = userstate.BagStateSpec('buffer', coders.PickleCoder())
-    BUFFER_COUNT_STATE = userstate.CombiningValueStateSpec('buffer_count', coders.VarIntCoder(), sum)
+    BUFFER_STATE = userstate.BagStateSpec('buffer', coder=coders.FastPrimitivesCoder())
+    BUFFER_COUNT_STATE = userstate.CombiningValueStateSpec('buffer_count', combine_fn=sum)
     EXPIRY_TIMER = userstate.TimerSpec('expiry', userstate.TimeDomain.WATERMARK)
     FLUSH_TIMER = userstate.TimerSpec('flush', userstate.TimeDomain.REAL_TIME)
 
@@ -26,7 +26,8 @@ class ElasticSearchBulkSink(beam.DoFn):
         self.chunk_size = chunk_size
         self.max_buffer_duration = max_buffer_duration
 
-        self.client = get_client(**es_args)
+        self.es_args = es_args
+        self.client = None
         self.bulk_args = dict(
             chunk_size=self.chunk_size,
             raise_on_exception=False,
@@ -41,38 +42,61 @@ class ElasticSearchBulkSink(beam.DoFn):
 
         self.busy = False
 
+    def setup(self):
+        super().setup()
+        self.client = Elasticsearch(**self.es_args)
+
     # noinspection PyMethodOverriding
-    def process(self, element,
+    def process(self, element: t.KV[str, t.Tuple[t.Dict[str, str], t.Dict[str, str]]],
                 window=beam.DoFn.WindowParam,
+                ts=beam.DoFn.TimestampParam,
                 buffer=beam.DoFn.StateParam(BUFFER_STATE),
                 count=beam.DoFn.StateParam(BUFFER_COUNT_STATE),
                 expiry_timer=beam.DoFn.TimerParam(EXPIRY_TIMER),
                 stale_timer=beam.DoFn.TimerParam(FLUSH_TIMER)):
 
         # Reset expiration timer
-        expiry_timer.set(window.end + self.max_buffer_duration)
-        stale_timer.set(time.time() + self.max_buffer_duration)
+        # expiry_timer.set(window.end + 1)
+        # stale_timer.set(time.time() + 1)
 
-        buffer.add(element)
-        count.add(element)
+        webis_uuid, (meta, payload) = element
+
+        print(count.read(), window.end, ts)
+        buffer.add(meta)
+        buffer.add(payload)
+        count.add(2)
+        open('/home/roce3528/Desktop/foo', 'a').write(str(count.read()) + '\n')
 
         if count.read() >= self.chunk_size:
-            yield from self._index(buffer, count)
+            print('sfds')
+        #     yield from self._index(buffer.read())
+        #     buffer.clear()
+        #     count.clear()
 
     @userstate.on_timer(EXPIRY_TIMER)
     def expiry(self, buffer=beam.DoFn.StateParam(BUFFER_STATE), count=beam.DoFn.StateParam(BUFFER_COUNT_STATE)):
-        yield from self._index(buffer, count)
+        # yield from self._index(buffer.read())
+        print(count.read())
+        print('expired')
+
+        # buffer.clear()
+        # count.clear()
 
     @userstate.on_timer(FLUSH_TIMER)
     def flush(self, buffer=beam.DoFn.StateParam(BUFFER_STATE), count=beam.DoFn.StateParam(BUFFER_COUNT_STATE)):
-        yield from self._index(buffer, count)
 
-    def _index(self, buffer, count):
+        print(count.read())
+        print('expiredx')
+        # yield from self._index(buffer.read())
+        #
+        # buffer.clear()
+        # count.clear()
+
+    def _index(self, batch):
         retry = 1
         errors = []
-        batch = buffer.read()
-        buffer.clear()
-        count.clear()
+        print(len(batch))
+        return
 
         while retry <= self.max_retries:
             try:
@@ -111,17 +135,7 @@ class ElasticSearchBulkSink(beam.DoFn):
         self.client.transport.close()
 
 
-__client = None
-
-
-def get_client(**conn_args):
-    global __client
-    if __client is None:
-        __client = Elasticsearch(**conn_args)
-    return __client
-
-
-def index_action(doc_id: str, index: str, data: Dict[str, str]):
+def index_action(doc_id: str, index: str, data: t.Dict[str, str]):
     return {
         '_op_type': 'index',
         '_index': index,
@@ -130,8 +144,8 @@ def index_action(doc_id: str, index: str, data: Dict[str, str]):
     }
 
 
-def ensure_index(client: Elasticsearch, name: str, index_settings: Dict[str, str] = None,
-                 mapping: Dict[str, str] = None):
+def ensure_index(client: Elasticsearch, name: str, index_settings: t.Dict[str, str] = None,
+                 mapping: t.Dict[str, str] = None):
     index_settings = index_settings or {}
     mapping = mapping or {}
 
