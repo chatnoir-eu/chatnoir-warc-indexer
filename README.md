@@ -5,7 +5,7 @@ Install with requirements:
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-python3 setup.py install
+pip3 install -e .
 ```
 
 ## 1. Configure
