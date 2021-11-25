@@ -15,5 +15,8 @@ setuptools.setup(
         'fastwarc',
         'resiliparse',
     ],
-    packages=setuptools.find_packages()
+    packages=setuptools.find_packages(),
+    entry_points={
+        'console_scripts': ['chatnoir-index=warc_indexer.index:main']
+    }
 )

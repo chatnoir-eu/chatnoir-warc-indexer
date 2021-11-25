@@ -1,4 +1,23 @@
-1. Create index with the desired index name in the Kibana console using the command in "create_index_kibana.txt"
-2. Download the Fast text model in the folder "models" from https://fasttext.cc/docs/en/english-vectors.html
-3. Run the gpt2 model as a server with "python -m detector.server detector-base.pt --port 8000"
-4. Run the index.py with arguments pointing to s3-bucket, index name etc
+# ChatNoir WARC Indexer
+
+Install with requirements:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python3 setup.py install
+```
+
+Set up indices if they don't exist yet:
+
+```bash
+chatnoir-index index-setup META_INDEX_NAME DATA_INDEX_NAME
+```
+
+Index data from WARC S3 bucket:
+
+```bash
+chatnoir-index index 's3://bucket/warc-glob*.warc.gz' META_INDEX_NAME DATA_INDEX_NAME ID_PREFIX
+```
+
+For more information on the parameters, run with `--help`.

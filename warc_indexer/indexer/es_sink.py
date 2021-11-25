@@ -1,8 +1,21 @@
+# Copyright 2021 Janek Bevendorff
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import time
 
 import apache_beam as beam
-import apache_beam.coders as coders
 import apache_beam.transforms.userstate as userstate
 import apache_beam.typehints.typehints as t
 from elasticsearch import Elasticsearch, TransportError
@@ -14,8 +27,6 @@ logger = logging.getLogger()
 
 # noinspection PyAbstractClass
 class ElasticSearchBulkSink(beam.DoFn):
-    BUFFER_STATE = userstate.BagStateSpec('buffer', coder=coders.FastPrimitivesCoder())
-    BUFFER_COUNT_STATE = userstate.CombiningValueStateSpec('buffer_count', combine_fn=sum)
     EXPIRY_TIMER = userstate.TimerSpec('expiry', userstate.TimeDomain.WATERMARK)
     FLUSH_TIMER = userstate.TimerSpec('flush', userstate.TimeDomain.REAL_TIME)
 
@@ -40,63 +51,45 @@ class ElasticSearchBulkSink(beam.DoFn):
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
 
-        self.busy = False
+        self.buffer = []
 
     def setup(self):
         super().setup()
         self.client = Elasticsearch(**self.es_args)
+        self.buffer = []
 
     # noinspection PyMethodOverriding
     def process(self, element: t.KV[str, t.Tuple[t.Dict[str, str], t.Dict[str, str]]],
                 window=beam.DoFn.WindowParam,
-                ts=beam.DoFn.TimestampParam,
-                buffer=beam.DoFn.StateParam(BUFFER_STATE),
-                count=beam.DoFn.StateParam(BUFFER_COUNT_STATE),
                 expiry_timer=beam.DoFn.TimerParam(EXPIRY_TIMER),
                 stale_timer=beam.DoFn.TimerParam(FLUSH_TIMER)):
 
         # Reset expiration timer
-        # expiry_timer.set(window.end + 1)
-        # stale_timer.set(time.time() + 1)
+        expiry_timer.set(window.end + self.max_buffer_duration)
+        stale_timer.set(time.time() + self.max_buffer_duration)
 
         webis_uuid, (meta, payload) = element
 
-        print(count.read(), window.end, ts)
-        buffer.add(meta)
-        buffer.add(payload)
-        count.add(2)
-        open('/home/roce3528/Desktop/foo', 'a').write(str(count.read()) + '\n')
+        self.buffer.append(meta)
+        self.buffer.append(payload)
 
-        if count.read() >= self.chunk_size:
-            print('sfds')
-        #     yield from self._index(buffer.read())
-        #     buffer.clear()
-        #     count.clear()
+        if len(self.buffer) >= self.chunk_size:
+            yield from self._index(self.buffer)
+            self.buffer.clear()
 
     @userstate.on_timer(EXPIRY_TIMER)
-    def expiry(self, buffer=beam.DoFn.StateParam(BUFFER_STATE), count=beam.DoFn.StateParam(BUFFER_COUNT_STATE)):
-        # yield from self._index(buffer.read())
-        print(count.read())
-        print('expired')
-
-        # buffer.clear()
-        # count.clear()
+    def expiry(self):
+        yield from self._index(self.buffer)
+        self.buffer.clear()
 
     @userstate.on_timer(FLUSH_TIMER)
-    def flush(self, buffer=beam.DoFn.StateParam(BUFFER_STATE), count=beam.DoFn.StateParam(BUFFER_COUNT_STATE)):
-
-        print(count.read())
-        print('expiredx')
-        # yield from self._index(buffer.read())
-        #
-        # buffer.clear()
-        # count.clear()
+    def flush(self):
+        yield from self._index(self.buffer)
+        self.buffer.clear()
 
     def _index(self, batch):
         retry = 1
         errors = []
-        print(len(batch))
-        return
 
         while retry <= self.max_retries:
             try:

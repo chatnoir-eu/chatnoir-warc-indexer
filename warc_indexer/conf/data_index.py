@@ -644,6 +644,22 @@ SETTINGS = {
                     "zw"
                 ]
             },
+            "host_pre_filter": {
+                "type": "pattern_capture",
+                "preserve_original": "false",
+                "patterns": [
+                    "^(?:www\\d?\\.)(.+\\..+)$"
+                ]
+            },
+            "host_delimiter_filter": {
+                "split_on_numerics": "false",
+                "generate_word_parts": "true",
+                "preserve_original": "true",
+                "catenate_words": "true",
+                "type": "word_delimiter",
+                "catenate_numbers": "true",
+                "stem_english_possessive": "true"
+            },
             "fr_stem_filter": {
                 "name": "minimal_french",
                 "type": "stemmer"
@@ -659,22 +675,6 @@ SETTINGS = {
             "en_stem_filter": {
                 "name": "minimal_english",
                 "type": "stemmer"
-            },
-            "host_delimiter_filter2": {
-                "type": "pattern_capture",
-                "preserve_original": "true",
-                "patterns": [
-                    "([^\\.]+)"
-                ]
-            },
-            "host_delimiter_filter1": {
-                "split_on_numerics": "false",
-                "generate_word_parts": "true",
-                "preserve_original": "true",
-                "catenate_words": "true",
-                "type": "word_delimiter",
-                "catenate_numbers": "true",
-                "stem_english_possessive": "true"
             },
             "fi_stem_filter": {
                 "name": "light_finish",
@@ -695,13 +695,6 @@ SETTINGS = {
                 "name": "light_hungarian",
                 "type": "stemmer"
             },
-            "host_pre_filter": {
-                "type": "pattern_capture",
-                "preserve_original": "false",
-                "patterns": [
-                    "^(?:www\\d?\\.)(.+\\..+)$"
-                ]
-            },
             "pl_stem_filter": {
                 "name": "polish_stop",
                 "type": "stop"
@@ -720,6 +713,17 @@ SETTINGS = {
             }
         },
         "analyzer": {
+            "host_analyzer": {
+                "filter": [
+                    "host_pre_filter",
+                    "host_delimiter_filter",
+                    "host_stop_filter",
+                    "en_stem_filter",
+                    "unique"
+                ],
+                "type": "custom",
+                "tokenizer": "whitespace"
+            },
             "de_analyzer": {
                 "filter": [
                     "icu_normalizer",
@@ -736,19 +740,6 @@ SETTINGS = {
                 ],
                 "type": "custom",
                 "tokenizer": "icu_tokenizer"
-            },
-            "host_analyzer": {
-                "filter": [
-                    "host_pre_filter",
-                    "host_delimiter_filter1",
-                    "host_delimiter_filter2",
-                    "host_delimiter_filter1",
-                    "host_stop_filter",
-                    "en_stem_filter",
-                    "unique"
-                ],
-                "type": "custom",
-                "tokenizer": "whitespace"
             },
             "bg_analyzer": {
                 "filter": [

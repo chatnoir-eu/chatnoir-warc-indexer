@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+#
+# Copyright 2021 Janek Bevendorff
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import os
 import sys
@@ -14,9 +29,9 @@ from elasticsearch.exceptions import TransportError
 from fastwarc.warc import WarcRecordType
 
 from warc_indexer.conf.config import get_config
-from warc_indexer.es_sink import ElasticSearchBulkSink, ensure_index
-from warc_indexer.process import ProcessRecord
-from warc_indexer.warc_source import WarcSource
+from warc_indexer.indexer.es_sink import ElasticSearchBulkSink, ensure_index
+from warc_indexer.indexer.process import ProcessRecord
+from warc_indexer.indexer.warc_source import WarcSource
 
 
 logger = logging.getLogger()
@@ -90,15 +105,13 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args):
     click.echo(f'Starting pipeline to index "{input_glob}"...')
     start = monotonic()
     with beam.Pipeline(options=options) as pipeline:
-        _ = (
+        (
             pipeline
-            | 'Iterate WARCs' >> beam.io.Read(
-                    WarcSource(input_glob, warc_args=dict(record_types=int(WarcRecordType.response))))
+            | 'Iterate WARCs' >> WarcSource(input_glob, warc_args=dict(record_types=int(WarcRecordType.response)))
             | 'Window' >> beam.WindowInto(window.FixedWindows(window.Duration.of(100)))
             | 'Process Records' >> beam.ParDo(ProcessRecord(id_prefix, meta_index, data_index))
             | 'Index Records' >> beam.ParDo(ElasticSearchBulkSink(get_config()['elasticsearch']))
         )
-
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
 
 

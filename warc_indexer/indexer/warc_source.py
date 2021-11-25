@@ -1,8 +1,23 @@
+# Copyright 2021 Janek Bevendorff
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import io
 import logging
 import sys
 import time
 
+import apache_beam as beam
 from apache_beam.io.aws.s3io import S3IO, S3Downloader
 from apache_beam.io.aws.clients.s3 import boto3_client, messages
 from apache_beam.io.filebasedsource import FileBasedSource
@@ -12,14 +27,30 @@ from apache_beam.io.filesystems import FileSystems
 from apache_beam.io.iobase import RangeTracker
 from apache_beam.options.value_provider import RuntimeValueProvider
 import apache_beam.transforms.window as window
-
 from fastwarc import warc
 
 logger = logging.getLogger()
 
 
+class WarcSource(beam.PTransform):
+    def __init__(self, file_pattern, validate=True, warc_args=None, freeze=True):
+        """
+        :param file_pattern: input file glob pattern
+        :param warc_args: arguments to pass to :class:`fastwarc.warc.ArchiveIterator`
+        :param freeze: freeze returned records
+        """
+        super().__init__()
+        self.file_pattern = file_pattern
+        self.warc_args = warc_args
+        self.freeze = freeze
+        self.validate = validate
+
+    def expand(self, pcoll):
+        return pcoll | beam.io.Read(_WarcSource(self.file_pattern, self.validate, self.warc_args, self.freeze))
+
+
 # noinspection PyAbstractClass
-class WarcSource(FileBasedSource):
+class _WarcSource(FileBasedSource):
     """
     WARC file input source.
     """
@@ -47,6 +78,7 @@ class WarcSource(FileBasedSource):
         :param range_tracker: input range tracker
         :return: tuple of (file name, WARC record)
         """
+
         def split_points_cb(stop_pos):
             if stop_pos >= range_tracker.last_attempted_record_start:
                 return 0

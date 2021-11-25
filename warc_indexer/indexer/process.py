@@ -1,3 +1,17 @@
+# Copyright 2021 Janek Bevendorff
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from base64 import b64encode
 from calendar import monthrange
 import logging
@@ -14,7 +28,7 @@ from resiliparse.extract.html2text import extract_plain_text
 from resiliparse.parse.html import HTMLTree
 from resiliparse.parse.lang import detect_fast as lang_detect_fast
 
-from warc_indexer.es_sink import index_action
+from warc_indexer.indexer.es_sink import index_action
 
 logger = logging.getLogger()
 
@@ -43,7 +57,7 @@ class ProcessRecord(beam.DoFn):
         :param element: tuple of file name, WARCRecord
         :return: key-value pair of UUID, (Metadata, Payload)
         """
-        file_name, warc_record = element
+        file_name, warc_record = element    # type: str, warc.WarcRecord
         doc_id = warc_record.headers.get('WARC-Record-ID')
 
         if not warc_record.headers.get('Content-Type', '').startswith('application/http'):
@@ -122,8 +136,8 @@ class ProcessRecord(beam.DoFn):
 
         content_full = extract_plain_text(html_tree.document, preserve_formatting=False)
 
-        lang = lang_detect_fast(content_full)
-        if lang[0] == 'en' and lang[1] > 1000:
+        lang, lang_score = lang_detect_fast(content_full)
+        if lang == 'en' and lang_score > 1000:
             raise SkipRecord('Document does not look like a text document.')
 
         main_content = extract_plain_text(html_tree.body, main_content=True, preserve_formatting=False)
