@@ -16,7 +16,6 @@ import logging
 import time
 
 import apache_beam as beam
-import apache_beam.transforms.userstate as userstate
 import apache_beam.typehints.typehints as t
 from elasticsearch import Elasticsearch, TransportError
 from elasticsearch.helpers import BulkIndexError, streaming_bulk
@@ -26,10 +25,7 @@ logger = logging.getLogger()
 
 
 # noinspection PyAbstractClass
-class ElasticSearchBulkSink(beam.DoFn):
-    EXPIRY_TIMER = userstate.TimerSpec('expiry', userstate.TimeDomain.WATERMARK)
-    FLUSH_TIMER = userstate.TimerSpec('flush', userstate.TimeDomain.REAL_TIME)
-
+class ElasticSearchBulkSink(beam.CombineFn):
     def __init__(self, es_args, chunk_size=500, max_buffer_duration=60,
                  max_retries=10, initial_backoff=2, max_backoff=600, request_timeout=120):
         super().__init__()
@@ -51,41 +47,35 @@ class ElasticSearchBulkSink(beam.DoFn):
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
 
-        self.buffer = []
-
     def setup(self):
-        super().setup()
         self.client = Elasticsearch(**self.es_args)
-        self.buffer = []
 
-    # noinspection PyMethodOverriding
-    def process(self, element: t.KV[str, t.Tuple[t.Dict[str, str], t.Dict[str, str]]],
-                window=beam.DoFn.WindowParam,
-                expiry_timer=beam.DoFn.TimerParam(EXPIRY_TIMER),
-                stale_timer=beam.DoFn.TimerParam(FLUSH_TIMER)):
+    def create_accumulator(self):
+        return []
 
-        # Reset expiration timer
-        expiry_timer.set(window.end + self.max_buffer_duration)
-        stale_timer.set(time.time() + self.max_buffer_duration)
+    def add_input(self, accumulator, element, *args, **kwargs):
+        accumulator.append(element)
+        if len(accumulator) >= self.chunk_size:
+            self._index(accumulator)
+            accumulator.clear()
+        return accumulator
 
-        webis_uuid, (meta, payload) = element
+    def merge_accumulators(self, accumulators, *args, **kwargs):
+        for a in accumulators[1:]:
+            accumulators[0].extend(a)
 
-        self.buffer.append(meta)
-        self.buffer.append(payload)
+            if len(accumulators[0]) >= self.chunk_size:
+                self._index(accumulators[0])
+                accumulators[0].clear()
 
-        if len(self.buffer) >= self.chunk_size:
-            yield from self._index(self.buffer)
-            self.buffer.clear()
+        return accumulators[0]
 
-    @userstate.on_timer(EXPIRY_TIMER)
-    def expiry(self):
-        yield from self._index(self.buffer)
-        self.buffer.clear()
+    def extract_output(self, accumulator, *args, **kwargs):
+        if len(accumulator) > 0:
+            self._index(accumulator)
+            accumulator.clear()
 
-    @userstate.on_timer(FLUSH_TIMER)
-    def flush(self):
-        yield from self._index(self.buffer)
-        self.buffer.clear()
+        return []
 
     def _index(self, batch):
         retry = 1
@@ -102,8 +92,6 @@ class ElasticSearchBulkSink(beam.DoFn):
                     if not ok:
                         to_retry.append(batch[i])
                         errors.append(info)
-                    else:
-                        yield info
 
                 if not to_retry:
                     return

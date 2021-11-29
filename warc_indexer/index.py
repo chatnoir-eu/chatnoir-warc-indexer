@@ -95,12 +95,13 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args):
     """
 
     sys.argv[1:] = beam_args
-    options = PipelineOptions(
+    opt_dict = dict(
         runner='FlinkRunner',
         setup_file=os.path.join(os.path.dirname(os.path.dirname(__file__)), 'setup.py'),
-        # environment_type='LOOPBACK',
-        **get_config()['pipeline_opts']
+        environment_type='LOOPBACK',
     )
+    opt_dict.update(get_config()['pipeline_opts'])
+    options = PipelineOptions(**opt_dict)
 
     click.echo(f'Starting pipeline to index "{input_glob}"...')
     start = monotonic()
@@ -108,9 +109,11 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args):
         (
             pipeline
             | 'Iterate WARCs' >> WarcSource(input_glob, warc_args=dict(record_types=int(WarcRecordType.response)))
-            | 'Window' >> beam.WindowInto(window.FixedWindows(window.Duration.of(100)))
+            | 'Window' >> beam.WindowInto(window.FixedWindows(20))
             | 'Process Records' >> beam.ParDo(ProcessRecord(id_prefix, meta_index, data_index))
-            | 'Index Records' >> beam.ParDo(ElasticSearchBulkSink(get_config()['elasticsearch']))
+            | 'Flatten Index Actions' >> beam.FlatMap(lambda e: e[1])
+            | 'Index Records' >> beam.CombineGlobally(
+                ElasticSearchBulkSink(get_config()['elasticsearch'])).without_defaults()
         )
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
 

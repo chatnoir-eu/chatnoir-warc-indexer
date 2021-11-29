@@ -50,7 +50,7 @@ class ProcessRecord(beam.DoFn):
 
     # noinspection PyMethodOverriding
     def process(self, element: t.Tuple[str, warc.WarcRecord]) -> \
-            t.Iterable[t.KV[str, t.Tuple[t.Dict[str, str], t.Dict[str, str]]]]:
+            t.Iterable[t.KV[str, t.Tuple[t.Dict[str, t.Any], t.Dict[str, t.Any]]]]:
         """
         Process WARC record and turn it into Elasticsearch index actions.
 

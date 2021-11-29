@@ -4,8 +4,6 @@ setuptools.setup(
     name='chatnoir-warc-indexer',
     version='0.0.1',
     url='https://resiliparse.chatnoir.eu',
-    author='Janek Bevendorff',
-    author_email='',
     install_requires=[
         'apache-beam',
         'boto3',
