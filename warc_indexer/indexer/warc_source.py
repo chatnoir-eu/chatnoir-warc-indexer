@@ -14,7 +14,6 @@
 
 import io
 import logging
-import sys
 import time
 
 import apache_beam as beam
@@ -63,12 +62,17 @@ class _WarcSource(FileBasedSource):
         :param freeze: freeze returned records
         """
         super().__init__(file_pattern,
-                         sys.maxsize,                    # WARCs are not arbitrarily splittable without an index
+                         0,
                          CompressionTypes.UNCOMPRESSED,  # Never decompress a file in Beam, FastWARC can do it faster
-                         True,                           # Source is generally splittable, just not blindly up-front
+                         False,                          # Source is generally splittable, just not individual files
                          validate)
         self._warc_args = warc_args or {}
         self.freeze = freeze
+        self._compression_type = 'compressed-atomic'     # Prevent splitting of individual files
+
+    @property
+    def splittable(self):
+        return True
 
     def read_records(self, file_name, range_tracker):
         """
