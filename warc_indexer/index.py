@@ -31,7 +31,7 @@ from fastwarc.warc import WarcRecordType
 from warc_indexer.conf.config import get_config
 from warc_indexer.indexer.es_sink import ElasticsearchBulkSink, ensure_index
 from warc_indexer.indexer.process import ProcessRecord
-from warc_indexer.indexer.warc_source import WarcSource
+from warc_indexer.indexer.warc_source import WarcInput
 
 
 logger = logging.getLogger()
@@ -108,7 +108,7 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args):
     with beam.Pipeline(options=options) as pipeline:
         (
             pipeline
-            | 'Iterate WARCs' >> WarcSource(input_glob, warc_args=dict(record_types=int(WarcRecordType.response)))
+            | 'Iterate WARCs' >> WarcInput(input_glob, warc_args=dict(record_types=int(WarcRecordType.response)))
             | 'Window' >> beam.WindowInto(window.FixedWindows(20))
             | 'Process Records' >> beam.ParDo(ProcessRecord(id_prefix, meta_index, data_index))
             | 'Flatten Index Actions' >> beam.FlatMap(lambda e: e[1])

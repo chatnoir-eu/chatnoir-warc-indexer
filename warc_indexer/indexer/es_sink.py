@@ -25,12 +25,13 @@ logger = logging.getLogger()
 
 
 class ElasticsearchBulkSink(beam.PTransform):
-    def __init__(self, es_args, chunk_size=500, max_retries=10, initial_backoff=2,
+    def __init__(self, es_args, fanout=None, chunk_size=500, max_retries=10, initial_backoff=2,
                  max_backoff=600, request_timeout=120):
         """
         Elasticsearch bulk indexing sink.
 
         :param es_args: Elasticsearch client arguments
+        :param fanout: combine fanout
         :param chunk_size: indexing chunk size
         :param max_retries: maximum number of retries on recoverable failures
         :param initial_backoff: initial retry backoff
@@ -40,9 +41,10 @@ class ElasticsearchBulkSink(beam.PTransform):
         super().__init__()
         self._bulk_sink = _ElasticsearchBulkSink(es_args, chunk_size, max_retries, initial_backoff,
                                                  max_backoff, request_timeout)
+        self._fanout = fanout
 
     def expand(self, pcoll):
-        return pcoll | beam.CombineGlobally(self._bulk_sink).without_defaults()
+        return pcoll | beam.CombineGlobally(self._bulk_sink).with_fanout(self._fanout).without_defaults()
 
 
 # noinspection PyAbstractClass

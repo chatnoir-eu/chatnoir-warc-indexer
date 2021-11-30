@@ -19,11 +19,12 @@ import time
 import apache_beam as beam
 from apache_beam.io.aws.s3io import S3IO, S3Downloader
 from apache_beam.io.aws.clients.s3 import boto3_client, messages
-from apache_beam.io.filebasedsource import FileBasedSource
 from apache_beam.io.filesystem import CompressionTypes
 from apache_beam.io.filesystemio import DownloaderStream
 from apache_beam.io.filesystems import FileSystems
-from apache_beam.io.iobase import RangeTracker
+from apache_beam.io.fileio import MatchFiles
+from apache_beam.io.restriction_trackers import OffsetRange, OffsetRestrictionTracker
+from apache_beam.options import pipeline_options
 from apache_beam.options.value_provider import RuntimeValueProvider
 import apache_beam.transforms.window as window
 from fastwarc import warc
@@ -31,87 +32,76 @@ from fastwarc import warc
 logger = logging.getLogger()
 
 
-class WarcSource(beam.PTransform):
-    def __init__(self, file_pattern, validate=True, warc_args=None, freeze=True):
+class WarcInput(beam.PTransform):
+    def __init__(self, file_pattern, warc_args=None, freeze=True):
         """
         :param file_pattern: input file glob pattern
         :param warc_args: arguments to pass to :class:`fastwarc.warc.ArchiveIterator`
         :param freeze: freeze returned records
         """
         super().__init__()
-        self.file_pattern = file_pattern
-        self.warc_args = warc_args
-        self.freeze = freeze
-        self.validate = validate
+        self._file_matcher = MatchFiles(file_pattern)
+        self._warc_reader = _WarcReader(warc_args, freeze)
 
     def expand(self, pcoll):
-        return pcoll | beam.io.Read(_WarcSource(self.file_pattern, self.validate, self.warc_args, self.freeze))
+        return pcoll | self._file_matcher | beam.Reshuffle() | beam.ParDo(self._warc_reader)
+
+
+class _WarcRestrictionProvider(beam.transforms.core.RestrictionProvider):
+    def initial_restriction(self, file_meta):
+        return OffsetRange(0, file_meta.size_in_bytes)
+
+    def create_tracker(self, restriction):
+        return OffsetRestrictionTracker(restriction)
+
+    def restriction_size(self, file_meta, restriction):
+        return min(file_meta.size_in_bytes, restriction.stop - restriction.start)
 
 
 # noinspection PyAbstractClass
-class _WarcSource(FileBasedSource):
+class _WarcReader(beam.DoFn):
     """
     WARC file input source.
     """
 
-    def __init__(self, file_pattern, validate=True, warc_args=None, freeze=True):
-        """
-        :param file_pattern: input file glob pattern
-        :param validate: verify that file exists
-        :param warc_args: arguments to pass to :class:`fastwarc.warc.ArchiveIterator`
-        :param freeze: freeze returned records
-        """
-        super().__init__(file_pattern,
-                         0,
-                         CompressionTypes.UNCOMPRESSED,  # Never decompress a file in Beam, FastWARC can do it faster
-                         False,                          # Source is generally splittable, just not individual files
-                         validate)
-        self._warc_args = warc_args or {}
-        self.freeze = freeze
-        self._compression_type = 'compressed-atomic'     # Prevent splitting of individual files
+    def __init__(self, warc_args, freeze):
+        super().__init__()
+        self._warc_args = warc_args
+        self._freeze = freeze
 
-    @property
-    def splittable(self):
-        return True
-
-    def read_records(self, file_name, range_tracker):
+    # noinspection PyMethodOverriding
+    def process(self, file_meta, tracker=beam.DoFn.RestrictionParam(_WarcRestrictionProvider())):
         """
         Read and return WARC records.
 
-        :param file_name: input file name
-        :param range_tracker: input range tracker
+        :param file_meta: input file metadata
+        :param tracker: input range tracker
         :return: tuple of (file name, WARC record)
         """
-
-        def split_points_cb(stop_pos):
-            if stop_pos >= range_tracker.last_attempted_record_start:
-                return 0
-            return RangeTracker.SPLIT_POINTS_UNKNOWN
-        range_tracker.set_split_points_unclaimed_callback(split_points_cb)
-
-        count = 0
-        with self._open_file(file_name, range_tracker.start_position()) as stream:
+        with self._open_file(file_meta.path, tracker.current_restriction().start) as stream:
             for record in warc.ArchiveIterator(stream, **self._warc_args):
-                count += 1
-                if not range_tracker.try_claim(record.stream_pos + stream.initial_offset):
+                logger.debug(f'Reading WARC record {record.record_id}')
+                if not tracker.try_claim(record.stream_pos + stream.initial_offset):
                     break
-                if self.freeze:
+                if self._freeze:
                     record.freeze()
 
-                yield window.TimestampedValue((file_name, record), int(time.time()))
+                yield window.TimestampedValue((file_meta.path, record), int(time.time()))
+            else:
+                tracker.try_claim(tracker.current_restriction().stop)
 
     def _open_file(self, file_name, start_offset):
         """Get input file stream."""
         if file_name.startswith('s3://'):
             stream = self._open_s3_stream(file_name, start_offset)
-            initial_offset = start_offset
+            stream.initial_offset = start_offset
         else:
-            stream = self.open_file(file_name)
-            initial_offset = 0
+            stream = FileSystems.open(file_name, 'application/octet-stream',
+                                      compression_type=CompressionTypes.UNCOMPRESSED)
+            stream.initial_offset = 0
             if start_offset != 0:
                 stream.seek(start_offset)
 
-        stream.initial_offset = initial_offset
         return stream
 
     # noinspection PyProtectedMember
@@ -127,8 +117,34 @@ class _WarcSource(FileBasedSource):
 
 
 class EfficientBoto3Client(boto3_client.Client):
-    def __init__(self, options, range_offset=0):
-        super().__init__(options)
+    # noinspection PyMissingConstructor
+    def __init__(self, options, range_offset=0, connect_timeout=60, read_timeout=240):
+        try:
+            import boto3
+            from botocore.client import Config
+        except ModuleNotFoundError:
+            raise ModuleNotFoundError('Missing boto3 requirement')
+
+        if isinstance(options, pipeline_options.PipelineOptions):
+            options = options.get_all_options()
+
+        session = boto3.session.Session()
+        self.client = session.client(
+            service_name='s3',
+            region_name=options.get('s3_region_name'),
+            api_version=options.get('s3_api_version'),
+            use_ssl=not options.get('s3_disable_ssl', False),
+            verify=options.get('s3_verify'),
+            endpoint_url=options.get('s3_endpoint_url'),
+            aws_access_key_id=options.get('s3_access_key_id'),
+            aws_secret_access_key=options.get('s3_secret_access_key'),
+            aws_session_token=options.get('s3_session_token'),
+            config=Config(
+                connect_timeout=connect_timeout,
+                read_timeout=read_timeout
+            )
+        )
+
         self._request = None
         self._stream = None
         self._range_offset = range_offset
