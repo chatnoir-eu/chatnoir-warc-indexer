@@ -24,6 +24,7 @@ import apache_beam.typehints.typehints as t
 
 from fastwarc import warc
 from resiliparse.parse.encoding import bytes_to_str, detect_encoding
+from resiliparse.process_guard import time_guard, ExecutionTimeout
 from resiliparse.extract.html2text import extract_plain_text
 from resiliparse.parse.html import HTMLTree
 from resiliparse.parse.lang import detect_fast as lang_detect_fast
@@ -57,34 +58,39 @@ class ProcessRecord(beam.DoFn):
         :param element: tuple of file name, WARCRecord
         :return: key-value pair of UUID, (Metadata, Payload)
         """
-        file_name, warc_record = element    # type: str, warc.WarcRecord
-        doc_id = warc_record.headers.get('WARC-Record-ID')
 
-        if not warc_record.headers.get('Content-Type', '').startswith('application/http'):
-            logger.info(f'Skipping document {doc_id}, reason: Not an HTTP response')
-            return
+        with time_guard(90, grace_period=60):
+            try:
+                file_name, warc_record = element    # type: str, warc.WarcRecord
+                doc_id = warc_record.headers.get('WARC-Record-ID')
 
-        if warc_record.content_length > 1024 * 1024:
-            logger.info(f'Skipping document {doc_id}, reason: Document too short ({warc_record.content_length} bytes)')
-            return
+                if not warc_record.headers.get('Content-Type', '').startswith('application/http'):
+                    logger.info(f'Skipping document {doc_id}, reason: Not an HTTP response')
+                    return
 
-        if warc_record.content_length < 500:
-            logger.info(f'Skipping document {doc_id}, reason: Document too short ({warc_record.content_length} bytes)')
-            return
+                if warc_record.content_length > 1024 * 1024:
+                    logger.info(f'Skipping document {doc_id}, reason: Document too short ({warc_record.content_length} bytes)')
+                    return
 
-        doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
-        wuid = webis_uuid(self.doc_id_prefix, doc_id)
-        content_bytes = warc_record.reader.read()
+                if warc_record.content_length < 500:
+                    logger.info(f'Skipping document {doc_id}, reason: Document too short ({warc_record.content_length} bytes)')
+                    return
 
-        try:
-            meta = self.create_metadata(file_name, warc_record, content_bytes)
-            payload = self.create_payload(meta, content_bytes)
-            yield wuid, (
-                index_action(wuid, self.meta_index, meta),
-                index_action(wuid, self.data_index, payload)
-            )
-        except SkipRecord as reason:
-            logger.info(f'Skipping document {doc_id}, reason: {reason}')
+                doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
+                wuid = webis_uuid(self.doc_id_prefix, doc_id)
+                content_bytes = warc_record.reader.read()
+
+                try:
+                    meta = self.create_metadata(file_name, warc_record, content_bytes)
+                    payload = self.create_payload(meta, content_bytes)
+                    yield wuid, (
+                        index_action(wuid, self.meta_index, meta),
+                        index_action(wuid, self.data_index, payload)
+                    )
+                except SkipRecord as reason:
+                    logger.info(f'Skipping document {doc_id}, reason: {reason}')
+            except ExecutionTimeout:
+                logger.info(f'Skipping document {doc_id}, reason: Execution timeout')
 
     @staticmethod
     def create_metadata(file_name: str, warc_record: warc.WarcRecord, content_bytes: bytes):

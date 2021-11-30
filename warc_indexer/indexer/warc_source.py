@@ -27,7 +27,9 @@ from apache_beam.io.restriction_trackers import OffsetRange, OffsetRestrictionTr
 from apache_beam.options import pipeline_options
 from apache_beam.options.value_provider import RuntimeValueProvider
 import apache_beam.transforms.window as window
-from fastwarc import warc
+from fastwarc.warc import ArchiveIterator
+from resiliparse.itertools import warc_retry
+
 
 logger = logging.getLogger()
 
@@ -78,8 +80,17 @@ class _WarcReader(beam.DoFn):
         :param tracker: input range tracker
         :return: tuple of (file name, WARC record)
         """
-        with self._open_file(file_meta.path, tracker.current_restriction().start) as stream:
-            for record in warc.ArchiveIterator(stream, **self._warc_args):
+
+        stream = None
+        try:
+            stream = self._open_file(file_meta.path, tracker.current_restriction().start)
+
+            def stream_factory(pos):
+                nonlocal stream
+                stream = self._open_file(file_meta.path, stream.initial_offset + pos)
+                return stream
+
+            for record in warc_retry(ArchiveIterator(stream, **self._warc_args), stream_factory, seek=False):
                 logger.debug(f'Reading WARC record {record.record_id}')
                 if not tracker.try_claim(record.stream_pos + stream.initial_offset):
                     break
@@ -89,6 +100,9 @@ class _WarcReader(beam.DoFn):
                 yield window.TimestampedValue((file_meta.path, record), int(time.time()))
             else:
                 tracker.try_claim(tracker.current_restriction().stop)
+        finally:
+            if stream and not stream.closed:
+                stream.close()
 
     def _open_file(self, file_name, start_offset):
         """Get input file stream."""
@@ -165,12 +179,13 @@ class EfficientBoto3Client(boto3_client.Client):
             self._stream = None
 
         # noinspection PyProtectedMember
-        if not self._stream or self._stream._raw_stream.closed:
+        if not self._stream or self._stream.closed:
             try:
+                # noinspection PyProtectedMember
                 self._stream = self.client.get_object(
                     Bucket=request.bucket,
                     Key=request.object,
-                    Range='bytes={}-'.format(start + self._range_offset))['Body']
+                    Range='bytes={}-'.format(start + self._range_offset))['Body']._raw_stream
                 self._request = request
                 self._pos = start
             except Exception as e:
