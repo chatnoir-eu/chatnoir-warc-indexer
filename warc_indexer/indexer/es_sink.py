@@ -24,14 +24,33 @@ from elasticsearch.helpers import BulkIndexError, streaming_bulk
 logger = logging.getLogger()
 
 
+class ElasticsearchBulkSink(beam.PTransform):
+    def __init__(self, es_args, chunk_size=500, max_retries=10, initial_backoff=2,
+                 max_backoff=600, request_timeout=120):
+        """
+        Elasticsearch bulk indexing sink.
+
+        :param es_args: Elasticsearch client arguments
+        :param chunk_size: indexing chunk size
+        :param max_retries: maximum number of retries on recoverable failures
+        :param initial_backoff: initial retry backoff
+        :param max_backoff: maximum retry backoff
+        :param request_timeout: Elasticsearch request timeout
+        """
+        super().__init__()
+        self._bulk_sink = _ElasticsearchBulkSink(es_args, chunk_size, max_retries, initial_backoff,
+                                                 max_backoff, request_timeout)
+
+    def expand(self, pcoll):
+        return pcoll | beam.CombineGlobally(self._bulk_sink).without_defaults()
+
+
 # noinspection PyAbstractClass
-class ElasticSearchBulkSink(beam.CombineFn):
-    def __init__(self, es_args, chunk_size=500, max_buffer_duration=60,
-                 max_retries=10, initial_backoff=2, max_backoff=600, request_timeout=120):
+class _ElasticsearchBulkSink(beam.CombineFn):
+    def __init__(self, es_args, chunk_size, max_retries, initial_backoff, max_backoff, request_timeout):
         super().__init__()
 
         self.chunk_size = chunk_size
-        self.max_buffer_duration = max_buffer_duration
 
         self.es_args = es_args
         self.client = None

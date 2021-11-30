@@ -29,7 +29,7 @@ from elasticsearch.exceptions import TransportError
 from fastwarc.warc import WarcRecordType
 
 from warc_indexer.conf.config import get_config
-from warc_indexer.indexer.es_sink import ElasticSearchBulkSink, ensure_index
+from warc_indexer.indexer.es_sink import ElasticsearchBulkSink, ensure_index
 from warc_indexer.indexer.process import ProcessRecord
 from warc_indexer.indexer.warc_source import WarcSource
 
@@ -112,8 +112,7 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args):
             | 'Window' >> beam.WindowInto(window.FixedWindows(20))
             | 'Process Records' >> beam.ParDo(ProcessRecord(id_prefix, meta_index, data_index))
             | 'Flatten Index Actions' >> beam.FlatMap(lambda e: e[1])
-            | 'Index Records' >> beam.CombineGlobally(
-                ElasticSearchBulkSink(get_config()['elasticsearch'])).without_defaults()
+            | 'Index Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'])
         )
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
 
