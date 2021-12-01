@@ -65,15 +65,17 @@ class ProcessRecord(beam.DoFn):
                 doc_id = warc_record.headers.get('WARC-Record-ID')
 
                 if not warc_record.headers.get('Content-Type', '').startswith('application/http'):
-                    logger.info(f'Skipping document {doc_id}, reason: Not an HTTP response')
+                    logger.info('Skipping document %s, reason: Not an HTTP response', doc_id)
                     return
 
                 if warc_record.content_length > 1024 * 1024:
-                    logger.info(f'Skipping document {doc_id}, reason: Document too short ({warc_record.content_length} bytes)')
+                    logger.info('Skipping document %s, reason: Document too short (%s bytes)',
+                                doc_id, warc_record.content_length)
                     return
 
                 if warc_record.content_length < 500:
-                    logger.info(f'Skipping document {doc_id}, reason: Document too short ({warc_record.content_length} bytes)')
+                    logger.info('Skipping document %s, reason: Document too short (%s bytes)',
+                                doc_id, warc_record.content_length)
                     return
 
                 doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
@@ -88,9 +90,13 @@ class ProcessRecord(beam.DoFn):
                         index_action(wuid, self.data_index, payload)
                     )
                 except SkipRecord as reason:
-                    logger.info(f'Skipping document {doc_id}, reason: {reason}')
+                    logger.info('Skipping document %s, reason: %s', doc_id, reason)
+
             except ExecutionTimeout:
-                logger.info(f'Skipping document {doc_id}, reason: Execution timeout')
+                logger.info('Skipping document %s, reason: Execution timeout', doc_id)
+            except Exception as e:
+                logger.error('Skipping failed document %s', doc_id)
+                logger.exception(e)
 
     @staticmethod
     def create_metadata(file_name: str, warc_record: warc.WarcRecord, content_bytes: bytes):

@@ -120,13 +120,13 @@ class _ElasticsearchBulkSink(beam.CombineFn):
                 batch = to_retry
 
             except TransportError as e:
-                logger.error(f'Unexpected transport error (attempt {retry}/{self.max_retries}).')
-                logger.error(e)
+                logger.error('Unexpected transport error (attempt %s/%s).', retry, self.max_retries)
+                logger.exception(e)
                 if retry >= self.max_retries:
                     raise e
             else:
-                logger.error(f'{len(errors)} documents failed to index (attempt {retry}/{self.max_retries})')
-                logger.error('Errors: {}'.format(errors))
+                logger.error('%s documents failed to index (attempt %s/%s)', len(errors), retry, self.max_retries)
+                logger.error('Errors: %s', errors)
 
             time.sleep(min(self.max_backoff, self.initial_backoff * 2 ** (retry - 1)))
             retry += 1

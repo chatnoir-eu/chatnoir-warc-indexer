@@ -82,6 +82,7 @@ class _WarcReader(beam.DoFn):
         """
 
         stream = None
+        record = None
         try:
             stream = self._open_file(file_meta.path, tracker.current_restriction().start)
 
@@ -91,7 +92,7 @@ class _WarcReader(beam.DoFn):
                 return stream
 
             for record in warc_retry(ArchiveIterator(stream, **self._warc_args), stream_factory, seek=False):
-                logger.debug(f'Reading WARC record {record.record_id}')
+                logger.debug('Reading WARC record %s', record.record_id)
                 if not tracker.try_claim(record.stream_pos + stream.initial_offset):
                     break
                 if self._freeze:
@@ -100,6 +101,13 @@ class _WarcReader(beam.DoFn):
                 yield window.TimestampedValue((file_meta.path, record), int(time.time()))
             else:
                 tracker.try_claim(tracker.current_restriction().stop)
+        except Exception as e:
+            if record:
+                logger.error('WARC reader failed in %s past record %s (pos: %s).',
+                             file_meta.path, record.record_id, record.stream_pos)
+            else:
+                logger.error('WARC reader failed in %s', file_meta.path)
+            logger.exception(e)
         finally:
             if stream and not stream.closed:
                 stream.close()
@@ -179,13 +187,13 @@ class EfficientBoto3Client(boto3_client.Client):
             self._stream = None
 
         # noinspection PyProtectedMember
-        if not self._stream or self._stream.closed:
+        if not self._stream or self._stream._raw_stream.closed:
             try:
                 # noinspection PyProtectedMember
                 self._stream = self.client.get_object(
                     Bucket=request.bucket,
                     Key=request.object,
-                    Range='bytes={}-'.format(start + self._range_offset))['Body']._raw_stream
+                    Range=f'bytes={start + self._range_offset}-')['Body']
                 self._request = request
                 self._pos = start
             except Exception as e:
