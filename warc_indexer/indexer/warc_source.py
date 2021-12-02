@@ -30,6 +30,15 @@ import apache_beam.transforms.window as window
 from fastwarc.warc import ArchiveIterator
 from resiliparse.itertools import warc_retry
 
+try:
+    import boto3
+    import botocore.client as boto_client
+    import botocore.exceptions as boto_exception
+except ModuleNotFoundError:
+    boto3 = None
+    boto_client = None
+    boto_exception = None
+
 
 logger = logging.getLogger()
 
@@ -91,6 +100,7 @@ class _WarcReader(beam.DoFn):
                 stream = self._open_file(file_meta.path, stream.initial_offset + pos)
                 return stream
 
+            logger.info('Starting WARC file %s', file_meta.path)
             for record in warc_retry(ArchiveIterator(stream, **self._warc_args), stream_factory, seek=False):
                 logger.debug('Reading WARC record %s', record.record_id)
                 if not tracker.try_claim(record.stream_pos + stream.initial_offset):
@@ -101,6 +111,7 @@ class _WarcReader(beam.DoFn):
                 yield window.TimestampedValue((file_meta.path, record), int(time.time()))
             else:
                 tracker.try_claim(tracker.current_restriction().stop)
+            logger.info('Completed WARC file %s', file_meta.path)
         except Exception as e:
             if record:
                 logger.error('WARC reader failed in %s past record %s (pos: %s).',
@@ -140,11 +151,8 @@ class _WarcReader(beam.DoFn):
 
 class EfficientBoto3Client(boto3_client.Client):
     # noinspection PyMissingConstructor
-    def __init__(self, options, range_offset=0, connect_timeout=60, read_timeout=240):
-        try:
-            import boto3
-            from botocore.client import Config
-        except ModuleNotFoundError:
+    def __init__(self, options, range_offset=0, retries=3, connect_timeout=60, read_timeout=240):
+        if boto3 is None:
             raise ModuleNotFoundError('Missing boto3 requirement')
 
         if isinstance(options, pipeline_options.PipelineOptions):
@@ -161,7 +169,7 @@ class EfficientBoto3Client(boto3_client.Client):
             aws_access_key_id=options.get('s3_access_key_id'),
             aws_secret_access_key=options.get('s3_secret_access_key'),
             aws_session_token=options.get('s3_session_token'),
-            config=Config(
+            config=boto_client.Config(
                 connect_timeout=connect_timeout,
                 read_timeout=read_timeout
             )
@@ -171,6 +179,7 @@ class EfficientBoto3Client(boto3_client.Client):
         self._stream = None
         self._range_offset = range_offset
         self._pos = 0
+        self._retries = retries
 
     def get_object_metadata(self, request):
         m = super().get_object_metadata(request)
@@ -204,7 +213,17 @@ class EfficientBoto3Client(boto3_client.Client):
         return self._stream
 
     def get_range(self, request, start, end):
-        stream = self.get_stream(request, start)
-        data = stream.read(end - start)
-        self._pos += len(data)
-        return data
+        for i in range(self._retries):
+            try:
+                stream = self.get_stream(request, start)
+                data = stream.read(end - start)
+                self._pos += len(data)
+                return data
+            except boto_exception.BotoCoreError as e:
+                # Read errors are more likely with long-lived connections, so retry if a read fails
+                self._stream = None
+                self._request = None
+                logger.error('Boto3 read error (attempt %s/%s)', i + 1, self._retries)
+                logger.exception(e)
+                if i + 1 == self._retries:
+                    raise messages.S3ClientError(str(e))
