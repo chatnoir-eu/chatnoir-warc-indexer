@@ -1,5 +1,8 @@
 MAPPING = {
     "properties": {
+        "uuid": {
+            "type": "keyword"
+        },
         "content_encoding": {
             "type": "keyword"
         },

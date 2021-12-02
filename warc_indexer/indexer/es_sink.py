@@ -25,7 +25,7 @@ logger = logging.getLogger()
 
 
 class ElasticsearchBulkSink(beam.PTransform):
-    def __init__(self, es_args, fanout=None, chunk_size=500, max_retries=10, initial_backoff=2,
+    def __init__(self, es_args, fanout=None, chunk_size=800, max_retries=10, initial_backoff=2,
                  max_backoff=600, request_timeout=120):
         """
         Elasticsearch bulk indexing sink.
@@ -141,7 +141,7 @@ def index_action(doc_id: str, index: str, data: t.Dict[str, str]):
     return {
         '_op_type': 'index',
         '_index': index,
-        '_id': doc_id,
+        'uuid': doc_id,
         **data
     }
 

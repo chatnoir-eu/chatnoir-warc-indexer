@@ -8,6 +8,9 @@ MAPPING = {
         ]
     },
     "properties": {
+        "uuid": {
+            "type": "keyword"
+        },
         "warc_record_id": {
             "type": "keyword"
         },

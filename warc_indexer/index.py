@@ -73,7 +73,7 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
     except TransportError as e:
         click.echo(f'ERROR: {e.error}', err=True)
         if len(e.args) > 2:
-            click.echo(e.args[2]["error"]["root_cause"][0]["reason"], err=True)
+            click.echo(str(e), err=True)
 
 
 @main.command(context_settings=dict(
