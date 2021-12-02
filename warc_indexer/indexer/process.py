@@ -59,44 +59,49 @@ class ProcessRecord(beam.DoFn):
         :return: key-value pair of UUID, (Metadata, Payload)
         """
 
-        with time_guard(90, grace_period=60):
+        # with time_guard(90, grace_period=60):
+        try:
+            file_name, warc_record = element    # type: str, warc.WarcRecord
+            doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
+
+            if not warc_record.headers.get('Content-Type', '').startswith('application/http'):
+                logger.info('Skipping document %s, reason: Not an HTTP response', doc_id)
+                return
+
+            if warc_record.content_length > 1024 * 1024:
+                logger.info('Skipping document %s, reason: Document too short (%s bytes)',
+                            doc_id, warc_record.content_length)
+                return
+
+            if warc_record.content_length < 500:
+                logger.info('Skipping document %s, reason: Document too short (%s bytes)',
+                            doc_id, warc_record.content_length)
+                return
+
+            if not warc_record.http_content_type or \
+                    warc_record.http_content_type.lower() not in ['text/html', 'application/xhtml+xml', 'text/plain']:
+                logger.info('Skipping document %s, reason: Wrong Content-Type (%s)',
+                            doc_id, warc_record.http_content_type)
+                return
+
+            wuid = webis_uuid(self.doc_id_prefix, doc_id)
+            content_bytes = warc_record.reader.read()
+
             try:
-                file_name, warc_record = element    # type: str, warc.WarcRecord
-                doc_id = warc_record.headers.get('WARC-Record-ID')
+                meta = self.create_metadata(file_name, warc_record, content_bytes)
+                payload = self.create_payload(meta, content_bytes)
+                yield wuid, (
+                    index_action(wuid, self.meta_index, meta),
+                    index_action(wuid, self.data_index, payload)
+                )
+            except SkipRecord as reason:
+                logger.info('Skipping document %s, reason: %s', doc_id, reason)
 
-                if not warc_record.headers.get('Content-Type', '').startswith('application/http'):
-                    logger.info('Skipping document %s, reason: Not an HTTP response', doc_id)
-                    return
-
-                if warc_record.content_length > 1024 * 1024:
-                    logger.info('Skipping document %s, reason: Document too short (%s bytes)',
-                                doc_id, warc_record.content_length)
-                    return
-
-                if warc_record.content_length < 500:
-                    logger.info('Skipping document %s, reason: Document too short (%s bytes)',
-                                doc_id, warc_record.content_length)
-                    return
-
-                doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
-                wuid = webis_uuid(self.doc_id_prefix, doc_id)
-                content_bytes = warc_record.reader.read()
-
-                try:
-                    meta = self.create_metadata(file_name, warc_record, content_bytes)
-                    payload = self.create_payload(meta, content_bytes)
-                    yield wuid, (
-                        index_action(wuid, self.meta_index, meta),
-                        index_action(wuid, self.data_index, payload)
-                    )
-                except SkipRecord as reason:
-                    logger.info('Skipping document %s, reason: %s', doc_id, reason)
-
-            except ExecutionTimeout:
-                logger.info('Skipping document %s, reason: Execution timeout', doc_id)
-            except Exception as e:
-                logger.error('Skipping failed document %s', doc_id)
-                logger.exception(e)
+        # except ExecutionTimeout:
+        #     logger.info('Skipping document %s, reason: Execution timeout', doc_id)
+        except Exception as e:
+            logger.error('Skipping failed document %s', doc_id)
+            logger.exception(e)
 
     @staticmethod
     def create_metadata(file_name: str, warc_record: warc.WarcRecord, content_bytes: bytes):
@@ -138,8 +143,8 @@ class ProcessRecord(beam.DoFn):
         :param content_bytes: raw payload as bytes
         :return: index document dict
         """
-
         content_str = bytes_to_str(content_bytes, metadata['content_encoding'])
+
         parse_url = urlparse(metadata['warc_target_uri'])
         html_tree = HTMLTree.parse(content_str)
 
@@ -147,20 +152,22 @@ class ProcessRecord(beam.DoFn):
             raise SkipRecord('No body')
 
         content_full = extract_plain_text(html_tree.document, preserve_formatting=False)
+        if not content_full:
+            raise SkipRecord('Document empty after full content extraction')
+
+        replacement_count = content_full.count('\ufffd')
+        if replacement_count / len(content_full) > 0.1:
+            raise SkipRecord(f'Document contains more than 10% Unicode replacement characters.')
+        if replacement_count > 0:
+            content_full = MULTI_SPACE_REGEX.sub(' ', content_full.replace('\ufffd', '')).strip()
 
         lang, lang_score = lang_detect_fast(content_full)
-        if lang == 'en' and lang_score > 1000:
+        if len(content_full) > 2048 and lang == 'en' and lang_score > 1000:
             raise SkipRecord('Document does not look like a text document.')
 
         main_content = extract_plain_text(html_tree.body, main_content=True, preserve_formatting=False)
         if len(main_content) < 200:
-            raise SkipRecord(f'Document too short ({len(main_content)} codepoints).')
-
-        replacement_count = main_content.count('\ufffd')
-        if replacement_count / len(main_content) > 0.1:
-            raise SkipRecord(f'Document contains more than 10% Unicode replacement characters.')
-        if replacement_count > 0:
-            main_content = MULTI_SPACE_REGEX.sub(' ', main_content.replace('\ufffd', '')).strip()
+            raise SkipRecord(f'Main content too short ({len(main_content)} codepoints).')
 
         index_doc = {
             'warc_record_id': metadata.get('warc_record_id'),
