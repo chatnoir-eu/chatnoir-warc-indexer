@@ -23,7 +23,7 @@ import apache_beam as beam
 import apache_beam.typehints.typehints as t
 
 from fastwarc import warc
-from resiliparse.parse.encoding import bytes_to_str, detect_encoding
+from resiliparse.parse.encoding import bytes_to_str, detect_encoding, detect_mime
 from resiliparse.process_guard import time_guard, ExecutionTimeout
 from resiliparse.extract.html2text import extract_plain_text
 from resiliparse.parse.html import HTMLTree
@@ -143,6 +143,10 @@ class ProcessRecord(beam.DoFn):
         :param content_bytes: raw payload as bytes
         :return: index document dict
         """
+
+        if detect_mime(content_bytes) != 'text/plain':
+            raise SkipRecord('Document does not look like a text document.')
+
         content_str = bytes_to_str(content_bytes, metadata['content_encoding'])
 
         parse_url = urlparse(metadata['warc_target_uri'])
@@ -162,8 +166,6 @@ class ProcessRecord(beam.DoFn):
             content_full = MULTI_SPACE_REGEX.sub(' ', content_full.replace('\ufffd', '')).strip()
 
         lang, lang_score = lang_detect_fast(content_full)
-        if len(content_full) > 2048 and lang == 'en' and lang_score > 1000:
-            raise SkipRecord('Document does not look like a text document.')
 
         main_content = extract_plain_text(html_tree.body, main_content=True, preserve_formatting=False)
         if len(main_content) < 200:
