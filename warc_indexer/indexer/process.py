@@ -69,7 +69,7 @@ class ProcessRecord(beam.DoFn):
                 return
 
             if warc_record.content_length > 1024 * 1024:
-                logger.info('Skipping document %s, reason: Document too short (%s bytes)',
+                logger.info('Skipping document %s, reason: Document too big (%s bytes)',
                             doc_id, warc_record.content_length)
                 return
 
