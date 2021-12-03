@@ -14,6 +14,8 @@
 
 from base64 import b64encode
 from calendar import monthrange
+from dateutil.parser import parse as date_parse
+from hashlib import blake2b
 import logging
 import re
 from urllib.parse import urlparse
@@ -84,15 +86,17 @@ class ProcessRecord(beam.DoFn):
                             doc_id, warc_record.http_content_type)
                 return
 
-            wuid = webis_uuid(self.doc_id_prefix, doc_id)
+            webis_id = webis_uuid(self.doc_id_prefix, doc_id)
+            record_time = int(date_parse(warc_record.headers.get('WARC-Date')).timestamp() * 1000)
+            idx_id = index_uuid(record_time, warc_record.stream_pos, file_name, webis_id)
             content_bytes = warc_record.reader.read()
 
             try:
-                meta = self.create_metadata(file_name, warc_record, content_bytes)
-                payload = self.create_payload(meta, content_bytes)
-                yield wuid, (
-                    index_action(wuid, self.meta_index, meta),
-                    index_action(wuid, self.data_index, payload)
+                meta = self.create_metadata(webis_id, file_name, warc_record, content_bytes)
+                payload = self.create_payload(webis_id, meta, content_bytes)
+                yield idx_id, (
+                    index_action(idx_id, self.meta_index, meta),
+                    index_action(idx_id, self.data_index, payload)
                 )
             except SkipRecord as reason:
                 logger.info('Skipping document %s, reason: %s', doc_id, reason)
@@ -104,10 +108,11 @@ class ProcessRecord(beam.DoFn):
             logger.exception(e)
 
     @staticmethod
-    def create_metadata(file_name: str, warc_record: warc.WarcRecord, content_bytes: bytes):
+    def create_metadata(doc_id, file_name: str, warc_record: warc.WarcRecord, content_bytes: bytes):
         """
         Parse WARC record into header dict and decoded content.
 
+        :param doc_id: Webis document UUID
         :param file_name: WARC file name
         :param warc_record: WarcRecord instance (unconsumed, but with parsed HTTP)
         :param content_bytes: WarcRecord payload data as bytes
@@ -118,6 +123,7 @@ class ProcessRecord(beam.DoFn):
         encoding = warc_record.http_charset or detect_encoding(content_bytes)
 
         meta = {
+            'uuid': doc_id,
             'source_file': file_name,
             'source_offset': warc_record.stream_pos,
             **{h.replace('-', '_').lower(): v for h, v in warc_record.headers if h.startswith('WARC-')},
@@ -135,17 +141,20 @@ class ProcessRecord(beam.DoFn):
         return meta
 
     @staticmethod
-    def create_payload(metadata: t.Dict[str, str], content_bytes: bytes):
+    def create_payload(doc_id, metadata: t.Dict[str, str], content_bytes: bytes):
         """
         Parse WARC record payload into an index document.
 
+        :param doc_id: Webis document UUID
         :param metadata: WARC metadata dict as created by :meth:`create_metadata`
         :param content_bytes: raw payload as bytes
         :return: index document dict
         """
 
-        if detect_mime(content_bytes) != 'text/plain':
-            raise SkipRecord('Document does not look like a text document.')
+        mime_type = detect_mime(content_bytes)
+        if mime_type != 'text/plain':
+            logger.info('Wrong MIME type: %s (extract: %s)', mime_type, content_bytes[:100])
+            # raise SkipRecord('Document does not look like a text document.')
 
         content_str = bytes_to_str(content_bytes, metadata['content_encoding'])
 
@@ -172,6 +181,7 @@ class ProcessRecord(beam.DoFn):
             raise SkipRecord(f'Main content too short ({len(main_content)} codepoints).')
 
         index_doc = {
+            'uuid': doc_id,
             'warc_record_id': metadata.get('warc_record_id'),
             'warc_trec_id': metadata.get('warc_trec_id'),
             'date': metadata.get('warc_date'),
@@ -209,9 +219,39 @@ def webis_uuid(corpus_prefix: str, internal_id: str) -> str:
 
     :param corpus_prefix: corpus prefix (e.g., clueweb09, cc15, ...)
     :param internal_id: internal doc ID (e.g., clueweb09-en0044-22-32198)
-    :return: Webis UUID as str
+    :return: Webis UUID as truncated Base64 string
     """
-    return b64encode(uuid.uuid5(uuid.NAMESPACE_URL, ':'.join((corpus_prefix, internal_id))).bytes).decode()
+    return b64encode(uuid.uuid5(uuid.NAMESPACE_URL, ':'.join((corpus_prefix, internal_id))).bytes)[:-2].decode()
+
+
+def index_uuid(unix_time_ms, warc_pos, warc_name, doc_id):
+    """
+    Calculate an index-friendly time-based UUIDv1 for a document.
+
+    :param unix_time_ms: 64-bit UNIX timestamp of the document in milliseconds
+    :param warc_pos: character offset in the WARC file
+    :param warc_name: WARC file name string
+    :param doc_id: document Webis UUID string
+    :return: index UUID as truncated Base64 string
+    """
+    mask_low = (1 << 32) - 1
+    mask_mid = ((1 << 16) - 1) << 32
+    time_low = unix_time_ms & mask_low
+    time_mid = (unix_time_ms & mask_mid) >> 32
+
+    warc_pos = warc_pos & ((1 << 32) - 1)
+    time_hi_version = ((warc_pos >> 16) & 0x3FFF) | 0x1000
+
+    clock_seq = warc_pos & 0xFFFF
+    clock_seq_hi_variant = ((clock_seq >> 8) & 0x3F) | 0x80
+    clock_seq_low = clock_seq & 0x00FF
+
+    name_hash = blake2b(warc_name.encode(), digest_size=3).digest()
+    id_hash = blake2b(doc_id.encode(), digest_size=3).digest()
+    node = int.from_bytes(name_hash + id_hash, 'big')
+
+    u = uuid.UUID(fields=(time_low, time_mid, time_hi_version, clock_seq_hi_variant, clock_seq_low, node))
+    return b64encode(u.bytes)[:-2].decode()
 
 
 def clip_warc_date(date_val: str) -> str:

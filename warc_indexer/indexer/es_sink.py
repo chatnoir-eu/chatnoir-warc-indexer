@@ -141,7 +141,7 @@ def index_action(doc_id: str, index: str, data: t.Dict[str, str]):
     return {
         '_op_type': 'index',
         '_index': index,
-        'uuid': doc_id,
+        '_id': doc_id,
         **data
     }
 

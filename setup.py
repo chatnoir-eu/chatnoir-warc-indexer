@@ -11,6 +11,7 @@ setuptools.setup(
         'elasticsearch',
         'elasticsearch_dsl',
         'fastwarc',
+        'python-dateutil',
         'resiliparse',
     ],
     packages=setuptools.find_packages(),
