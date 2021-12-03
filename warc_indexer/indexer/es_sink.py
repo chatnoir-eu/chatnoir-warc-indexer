@@ -137,7 +137,8 @@ class _ElasticsearchBulkSink(beam.CombineFn):
         raise BulkIndexError(f'{len(errors)} documents failed to index.', errors)
 
     def teardown(self):
-        self.client.transport.close()
+        if self.client:
+            self.client.transport.close()
 
 
 def index_action(doc_id: str, index: str, data: t.Dict[str, str]):
