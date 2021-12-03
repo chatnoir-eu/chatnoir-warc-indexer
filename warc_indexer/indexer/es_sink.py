@@ -134,7 +134,7 @@ class _ElasticsearchBulkSink(beam.CombineFn):
             time.sleep(min(self.max_backoff, self.initial_backoff * 2 ** (retry - 1)))
             retry += 1
 
-        raise BulkIndexError(f'{len(errors)} documents failed to index.', errors)
+        logger.error(f'%s document(s) failed to index, giving up on batch.', len(errors))
 
     def teardown(self):
         if self.client:
