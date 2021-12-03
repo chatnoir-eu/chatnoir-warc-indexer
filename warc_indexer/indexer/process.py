@@ -152,9 +152,8 @@ class ProcessRecord(beam.DoFn):
         """
 
         mime_type = detect_mime(content_bytes)
-        if mime_type != 'text/plain':
-            logger.info('Wrong MIME type: %s (extract: %s)', mime_type, content_bytes[:100])
-            # raise SkipRecord('Document does not look like a text document.')
+        if mime_type not in ['text/plain', 'text/html', 'text/xml']:
+            raise SkipRecord(f'Document does not look like a text document ({mime_type}).')
 
         content_str = bytes_to_str(content_bytes, metadata['content_encoding'])
 
