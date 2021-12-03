@@ -195,8 +195,8 @@ class ProcessRecord(beam.DoFn):
 
         index_doc.update({
             f'title_lang_{lang}': get_document_title(html_tree),
-            'meta_keywords': get_document_meta_keywords(html_tree),
-            f'meta_desc_lang_{lang}': get_document_meta_desc(html_tree),
+            'meta_keywords': get_document_meta_keywords(html_tree)[:8192],
+            f'meta_desc_lang_{lang}': get_document_meta_desc(html_tree)[:8192],
             f'body_lang_{lang}': main_content,
             f'full_body_lang_{lang}': content_full,
             f'headings_lang_{lang}': get_document_headings(html_tree, 3)
