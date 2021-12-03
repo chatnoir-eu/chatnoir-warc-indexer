@@ -25,13 +25,14 @@ logger = logging.getLogger()
 
 
 class ElasticsearchBulkSink(beam.PTransform):
-    def __init__(self, es_args, fanout=None, chunk_size=800, max_retries=10, initial_backoff=2,
+    def __init__(self, es_args, fanout=None, buffer_size=3200, chunk_size=400, max_retries=10, initial_backoff=2,
                  max_backoff=600, request_timeout=120):
         """
         Elasticsearch bulk indexing sink.
 
         :param es_args: Elasticsearch client arguments
         :param fanout: combine fanout
+        :param buffer_size: internal buffer size
         :param chunk_size: indexing chunk size
         :param max_retries: maximum number of retries on recoverable failures
         :param initial_backoff: initial retry backoff
@@ -39,7 +40,7 @@ class ElasticsearchBulkSink(beam.PTransform):
         :param request_timeout: Elasticsearch request timeout
         """
         super().__init__()
-        self._bulk_sink = _ElasticsearchBulkSink(es_args, chunk_size, max_retries, initial_backoff,
+        self._bulk_sink = _ElasticsearchBulkSink(es_args, buffer_size, chunk_size, max_retries, initial_backoff,
                                                  max_backoff, request_timeout)
         self._fanout = fanout
 
@@ -49,15 +50,15 @@ class ElasticsearchBulkSink(beam.PTransform):
 
 # noinspection PyAbstractClass
 class _ElasticsearchBulkSink(beam.CombineFn):
-    def __init__(self, es_args, chunk_size, max_retries, initial_backoff, max_backoff, request_timeout):
+    def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff, request_timeout):
         super().__init__()
 
-        self.chunk_size = chunk_size
+        self.buffer_size = buffer_size
 
         self.es_args = es_args
         self.client = None
         self.bulk_args = dict(
-            chunk_size=self.chunk_size,
+            chunk_size=chunk_size,
             raise_on_exception=False,
             raise_on_error=False,
             max_retries=0,
@@ -76,7 +77,7 @@ class _ElasticsearchBulkSink(beam.CombineFn):
 
     def add_input(self, accumulator, element, *args, **kwargs):
         accumulator.append(element)
-        if len(accumulator) >= self.chunk_size:
+        if len(accumulator) >= self.buffer_size:
             self._index(accumulator)
             accumulator.clear()
         return accumulator
@@ -85,7 +86,7 @@ class _ElasticsearchBulkSink(beam.CombineFn):
         for a in accumulators[1:]:
             accumulators[0].extend(a)
 
-            if len(accumulators[0]) >= self.chunk_size:
+            if len(accumulators[0]) >= self.buffer_size:
                 self._index(accumulators[0])
                 accumulators[0].clear()
 
@@ -101,6 +102,8 @@ class _ElasticsearchBulkSink(beam.CombineFn):
     def _index(self, batch):
         retry = 1
         errors = []
+
+        batch.sort(key=lambda x: x.get('_id', ''))
 
         while retry <= self.max_retries:
             try:

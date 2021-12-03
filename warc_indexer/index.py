@@ -53,7 +53,7 @@ def uuid_prefix_partitioner(key, num_partitions):
 @click.option('--shards-meta', help='Number of shards for meta index', type=int, default=10, show_default=True)
 @click.option('--shards-data', help='Number of shards for data index', type=int, default=40, show_default=True)
 @click.option('--replicas', help='Number of replicas for indexing (should be 0 or 1)',
-              type=int, default=1, show_default=True)
+              type=int, default=0, show_default=True)
 def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
     """
     Set up meta data and data indices if they don't already exist.
