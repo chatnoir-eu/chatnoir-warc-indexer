@@ -3,6 +3,7 @@ CONFIG = dict(
     elasticsearch=dict(
         hosts=['localhost:9200'],
         use_ssl=True,
+        timeout=120
     ),
 
     # Apache Beam pipeline options
