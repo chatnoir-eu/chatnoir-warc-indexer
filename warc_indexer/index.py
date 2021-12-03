@@ -60,16 +60,16 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
     """
     click.echo('Setting up indices if the do not exist.')
 
-    import conf.data_index
-    import conf.meta_index
+    import warc_indexer.conf.meta_index as meta_index_conf
+    import warc_indexer.conf.data_index as data_index_conf
 
-    conf.meta_index.SETTINGS.update(dict(number_of_shards=shards_meta, number_of_replicas=replicas))
-    conf.data_index.SETTINGS.update(dict(number_of_shards=shards_data, number_of_replicas=replicas))
+    meta_index_conf.SETTINGS.update(dict(number_of_shards=shards_meta, number_of_replicas=replicas))
+    data_index_conf.SETTINGS.update(dict(number_of_shards=shards_data, number_of_replicas=replicas))
 
     try:
         es_client = Elasticsearch(**get_config()['elasticsearch'])
-        ensure_index(es_client, data_index, conf.data_index.SETTINGS, conf.data_index.MAPPING)
-        ensure_index(es_client, meta_index, conf.meta_index.SETTINGS, conf.meta_index.MAPPING)
+        ensure_index(es_client, data_index, data_index_conf.SETTINGS, data_index_conf.MAPPING)
+        ensure_index(es_client, meta_index, meta_index_conf.SETTINGS, meta_index_conf.MAPPING)
     except TransportError as e:
         click.echo(f'ERROR: {e.error}', err=True)
         if len(e.args) > 2:
