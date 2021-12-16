@@ -58,11 +58,6 @@ MAPPING = {
         "content_type": {
             "type": "keyword"
         },
-        "meta_keywords": {
-            "type": "text",
-            "similarity": "BM25",
-            "analyzer": "meta_keyword_analyzer"
-        },
         "page_rank": {
             "type": "float"
         },
@@ -779,14 +774,6 @@ SETTINGS = {
                 "type": "custom",
                 "tokenizer": "icu_tokenizer"
             },
-            "meta_keyword_analyzer": {
-                "filter": [
-                    "icu_normalizer",
-                    "icu_folding"
-                ],
-                "type": "custom",
-                "tokenizer": "meta_keyword_tokenizer"
-            },
             "nl_analyzer": {
                 "filter": [
                     "icu_normalizer",
@@ -987,10 +974,6 @@ SETTINGS = {
             }
         },
         "tokenizer": {
-            "meta_keyword_tokenizer": {
-                "pattern": "[, \\t]",
-                "type": "pattern"
-            },
             "query_tokenizer": {
                 "pattern": "[&=]",
                 "type": "pattern"

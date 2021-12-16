@@ -195,7 +195,7 @@ class ProcessRecord(beam.DoFn):
 
         index_doc.update({
             f'title_lang_{lang}': get_document_title(html_tree),
-            'meta_keywords': get_document_meta_keywords(html_tree)[:8192],
+            f'meta_keywords_{lang}': get_document_meta_keywords(html_tree)[:8192],
             f'meta_desc_lang_{lang}': get_document_meta_desc(html_tree)[:8192],
             f'body_lang_{lang}': main_content,
             f'full_body_lang_{lang}': content_full,
@@ -268,6 +268,14 @@ def clip_warc_date(date_val: str) -> str:
                   lambda g: '{}-{}-{}'.format(g.group(1), g.group(2), c(g.group(1), g.group(2), g.group(3))), date_val)
 
 
+WS_REGEX = re.compile(r'\s+')
+
+
+def ws_collapse(text):
+    """Collapse white space and trim input string."""
+    return WS_REGEX.sub(text, ' ').strip()
+
+
 def get_document_title(html_tree: HTMLTree) -> str:
     """
     Intelligently try to extract a document title.
@@ -277,26 +285,26 @@ def get_document_title(html_tree: HTMLTree) -> str:
     """
     title = html_tree.title.strip()
     if title:
-        return title
+        return ws_collapse(title)
 
     h1 = html_tree.body.query_selector('h1')
     if h1 and h1.text:
-        return h1.text
+        return ws_collapse(h1.text)
 
     h2 = html_tree.body.query_selector('h2')
     if h2 and h2.text:
-        return h2.text
+        return ws_collapse(h2.text,)
 
-    # title_cls = html_tree.body.query_selector('.title')
-    # if title_cls:
-    #     return title_cls.text
+    title_cls = html_tree.body.query_selector('.title')
+    if title_cls:
+        return ws_collapse(title_cls.text)
 
     return ''
 
 
 def get_document_meta_desc(html_tree: HTMLTree) -> str:
     """
-    Get document meta description
+    Get document meta description.
 
     :param html_tree: Resiliparse HTML tree
     :return: meta description
@@ -308,14 +316,16 @@ def get_document_meta_desc(html_tree: HTMLTree) -> str:
     if not desc:
         return ''
 
-    return desc.getattr('content', '').strip()
+    return ws_collapse(desc.getattr('content', ''))
 
 
-def get_document_meta_keywords(html_tree: HTMLTree) -> str:
+def get_document_meta_keywords(html_tree: HTMLTree, max_len: int = 80, limit: int = 30) -> t.List[str]:
     """
-    Get document meta keywords as list
+    Get list of deduplicated and lower-cased document meta keywords.
 
     :param html_tree: Resiliparse HTML tree
+    :param max_len: cut off individual keywords after this many characters
+    :param limit: limit list to this many keywords
     :return: meta keywords
     """
     if not html_tree.head:
@@ -325,12 +335,12 @@ def get_document_meta_keywords(html_tree: HTMLTree) -> str:
     if not keywords:
         return []
 
-    return [k.strip() for k in keywords.getattr('content', '').split(',')]
+    return list(set(ws_collapse(k)[:max_len].lower() for k in keywords.getattr('content', '').split(',')))[:limit]
 
 
 def get_document_headings(html_tree: HTMLTree, max_level: int = 3) -> t.List[str]:
     """
-    Get a list of document headings up to a certain level
+    Get a list of document headings up to a certain level.
 
     :param html_tree: Resiliparse HTML tree
     :param max_level: maximum heading level to extract
@@ -340,4 +350,4 @@ def get_document_headings(html_tree: HTMLTree, max_level: int = 3) -> t.List[str
         return []
 
     headings = html_tree.head.query_selector_all(', '.join(f'h{i}' for i in range(1, max_level + 1)))
-    return [k.text.strip() for k in headings]
+    return [ws_collapse(k.text) for k in headings]
