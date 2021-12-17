@@ -93,21 +93,19 @@ class _WarcReader(beam.DoFn):
 
         stream = None
         record = None
-        initial_offset = 0
         try:
             def stream_factory(pos):
-                nonlocal stream, initial_offset
+                nonlocal stream
                 stream = self._open_file(file_meta.path)
                 if pos != 0:
                     stream.seek(pos)
-                initial_offset = stream.tell()
                 return stream
 
             stream = stream_factory(tracker.current_restriction().start)
             logger.info('Starting WARC file %s', file_meta.path)
             for record in warc_retry(ArchiveIterator(stream, **self._warc_args), stream_factory, seek=False):
                 logger.debug('Reading WARC record %s', record.record_id)
-                if not tracker.try_claim(record.stream_pos + initial_offset):
+                if not tracker.try_claim(record.stream_pos):
                     break
                 if self._freeze:
                     record.freeze()
@@ -147,6 +145,12 @@ class _WarcReader(beam.DoFn):
 
         downloader = S3Downloader(s3io.client, file_name, buffer_size=buffer_size)
         return io.BufferedReader(DownloaderStream(downloader, mode='rb'), buffer_size=buffer_size)
+
+
+def get_http_error_code(exc):
+    if hasattr(exc, 'response'):
+        return exc.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+    return None
 
 
 class EfficientBoto3Client(boto3_client.Client):
@@ -207,13 +211,11 @@ class EfficientBoto3Client(boto3_client.Client):
                 self._download_request = request
                 self._download_pos = start
             except Exception as e:
-                message = e.response['Error'].get('Message', e.response['Error'].get('Code', ''))
-                code = e.response['ResponseMetadata']['HTTPStatusCode']
-                raise messages.S3ClientError(message, code)
+                raise messages.S3ClientError(str(e), get_http_error_code(e))
 
         return self._download_stream
 
-    @retry.with_exponential_backoff(initial_delay_secs=0.05)
+    @retry.with_exponential_backoff()
     def get_range(self, request, start, end):
         r"""Retrieves an object's contents.
 
@@ -224,13 +226,19 @@ class EfficientBoto3Client(boto3_client.Client):
           Returns:
             (bytes) The response message.
           """
-        try:
-            stream = self.get_stream(request, start)
-            data = stream.read(end - start)
-            self._download_pos += len(data)
-            return data
-        except boto_exception.BotoCoreError as e:
-            # Read errors are more likely with long-lived connections, so retry if a read fails
-            self._download_stream = None
-            self._download_request = None
-            raise messages.S3ClientError(str(e))
+        for i in range(2):
+            try:
+                stream = self.get_stream(request, start)
+                data = stream.read(end - start)
+                self._download_pos += len(data)
+                return data
+            except Exception as e:
+                self._download_stream = None
+                self._download_request = None
+                if i == 0:
+                    # Read errors are likely with long-lived connections, retry immediately if a read fails once
+                    continue
+                if isinstance(e, messages.S3ClientError):
+                    e.code = 500
+                    raise e
+                raise messages.S3ClientError(str(e), get_http_error_code(e) or 500)

@@ -18,7 +18,7 @@ import time
 import apache_beam as beam
 import apache_beam.typehints.typehints as t
 from elasticsearch import Elasticsearch, TransportError
-from elasticsearch.helpers import BulkIndexError, streaming_bulk
+from elasticsearch.helpers import streaming_bulk
 
 
 logger = logging.getLogger()
@@ -26,7 +26,7 @@ logger = logging.getLogger()
 
 class ElasticsearchBulkSink(beam.PTransform):
     def __init__(self, es_args, fanout=None, buffer_size=3200, chunk_size=400, max_retries=10, initial_backoff=2,
-                 max_backoff=600, request_timeout=120):
+                 max_backoff=600, request_timeout=240, ignore_persistent_errors=False):
         """
         Elasticsearch bulk indexing sink.
 
@@ -38,10 +38,11 @@ class ElasticsearchBulkSink(beam.PTransform):
         :param initial_backoff: initial retry backoff
         :param max_backoff: maximum retry backoff
         :param request_timeout: Elasticsearch request timeout
+        :param ignore_persistent_errors: ignore errors that persist after `max_retries` and continue
         """
         super().__init__()
         self._bulk_sink = _ElasticsearchBulkSink(es_args, buffer_size, chunk_size, max_retries, initial_backoff,
-                                                 max_backoff, request_timeout)
+                                                 max_backoff, request_timeout, ignore_persistent_errors)
         self._fanout = fanout
 
     def expand(self, pcoll):
@@ -50,7 +51,8 @@ class ElasticsearchBulkSink(beam.PTransform):
 
 # noinspection PyAbstractClass
 class _ElasticsearchBulkSink(beam.CombineFn):
-    def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff, request_timeout):
+    def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff,
+                 request_timeout, ignore_persistent_errors):
         super().__init__()
 
         self.buffer_size = buffer_size
@@ -68,6 +70,7 @@ class _ElasticsearchBulkSink(beam.CombineFn):
         self.max_retries = max_retries
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
+        self.ignore_persistent_errors = ignore_persistent_errors
 
     def setup(self):
         self.client = Elasticsearch(**self.es_args)
@@ -100,12 +103,12 @@ class _ElasticsearchBulkSink(beam.CombineFn):
         return []
 
     def _index(self, batch):
-        retry = 1
+        retry = 0
         errors = []
 
         batch.sort(key=lambda x: x.get('_id', ''))
 
-        while retry <= self.max_retries:
+        while retry < self.max_retries:
             try:
                 errors = []
                 to_retry = []
@@ -123,18 +126,18 @@ class _ElasticsearchBulkSink(beam.CombineFn):
                 batch = to_retry
 
             except TransportError as e:
-                logger.error('Unexpected transport error (attempt %s/%s).', retry, self.max_retries)
-                logger.exception(e)
-                if retry >= self.max_retries:
-                    raise e
-            else:
-                logger.error('%s documents failed to index (attempt %s/%s)', len(errors), retry, self.max_retries)
-                logger.error('Errors: %s', errors)
+                logger.error('Elasticsearch error (attempt %s/%s): %s', retry + 1, self.max_retries, e.error)
+                if retry == self.max_retries - 1:
+                    if not self.ignore_persistent_errors:
+                        raise e
+                    break
+                logger.error('Retrying with exponential backoff in %s seconds...', self.initial_backoff * (2 ** retry))
 
-            time.sleep(min(self.max_backoff, self.initial_backoff * 2 ** (retry - 1)))
+            time.sleep(min(self.max_backoff, self.initial_backoff * (2 ** retry)))
             retry += 1
 
-        logger.error(f'%s document(s) failed to index, giving up on batch.', len(errors))
+        logger.error('%s document(s) failed to index, giving up on batch.', len(errors))
+        logger.error('Failed document(s): %s', errors)
 
     def teardown(self):
         if self.client:

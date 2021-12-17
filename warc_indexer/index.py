@@ -112,7 +112,7 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args):
             | 'Window' >> beam.WindowInto(window.FixedWindows(20))
             | 'Process Records' >> beam.ParDo(ProcessRecord(id_prefix, meta_index, data_index))
             | 'Flatten Index Actions' >> beam.FlatMap(lambda e: e[1])
-            | 'Index Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'])
+            | 'Index Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'], ignore_persistent_errors=True)
         )
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
 
