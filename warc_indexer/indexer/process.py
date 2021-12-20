@@ -163,7 +163,7 @@ class ProcessRecord(beam.DoFn):
         if not html_tree.body:
             raise SkipRecord('No body')
 
-        content_full = extract_plain_text(html_tree, preserve_formatting=False)
+        content_full = extract_plain_text(html_tree, alt_texts=True, preserve_formatting=False)
         if not content_full:
             raise SkipRecord('Document empty after full content extraction')
 
@@ -175,7 +175,8 @@ class ProcessRecord(beam.DoFn):
 
         lang, lang_score = lang_detect_fast(content_full)
 
-        main_content = extract_plain_text(html_tree, main_content=True, preserve_formatting=False)
+        main_content = extract_plain_text(html_tree, main_content=True, alt_texts=True,
+                                          preserve_formatting=True, list_bullets=False)
         if len(main_content) < 200:
             raise SkipRecord(f'Main content too short ({len(main_content)} codepoints).')
 
