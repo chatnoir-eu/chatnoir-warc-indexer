@@ -34,11 +34,9 @@ from resiliparse.itertools import warc_retry
 try:
     import boto3
     import botocore.client as boto_client
-    import botocore.exceptions as boto_exception
 except ModuleNotFoundError:
     boto3 = None
     boto_client = None
-    boto_exception = None
 
 
 logger = logging.getLogger()
