@@ -25,13 +25,12 @@ logger = logging.getLogger()
 
 
 class ElasticsearchBulkSink(beam.PTransform):
-    def __init__(self, es_args, fanout=None, buffer_size=3200, chunk_size=400, max_retries=10, initial_backoff=2,
+    def __init__(self, es_args, buffer_size=3200, chunk_size=400, max_retries=10, initial_backoff=2,
                  max_backoff=600, request_timeout=240, ignore_persistent_errors=False):
         """
         Elasticsearch bulk indexing sink.
 
         :param es_args: Elasticsearch client arguments
-        :param fanout: combine fanout
         :param buffer_size: internal buffer size
         :param chunk_size: indexing chunk size
         :param max_retries: maximum number of retries on recoverable failures
@@ -43,10 +42,10 @@ class ElasticsearchBulkSink(beam.PTransform):
         super().__init__()
         self._bulk_sink = _ElasticsearchBulkSink(es_args, buffer_size, chunk_size, max_retries, initial_backoff,
                                                  max_backoff, request_timeout, ignore_persistent_errors)
-        self._fanout = fanout
 
     def expand(self, pcoll):
-        return pcoll | beam.CombineGlobally(self._bulk_sink).with_fanout(self._fanout).without_defaults()
+        # return pcoll | beam.CombineGlobally(self._bulk_sink).without_defaults()
+        return pcoll | beam.ParDo(self._bulk_sink)
 
 
 class _BatchAccumulator:
@@ -56,12 +55,14 @@ class _BatchAccumulator:
 
 
 # noinspection PyAbstractClass
-class _ElasticsearchBulkSink(beam.CombineFn):
+# class _ElasticsearchBulkSink(beam.CombineFn):
+class _ElasticsearchBulkSink(beam.DoFn):
     def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff,
                  request_timeout, ignore_persistent_errors):
         super().__init__()
 
         self.buffer_size = buffer_size
+        self.buffer = []
 
         self.es_args = es_args
         self.client = None
@@ -81,37 +82,44 @@ class _ElasticsearchBulkSink(beam.CombineFn):
     def setup(self):
         self.client = Elasticsearch(**self.es_args)
 
-    def create_accumulator(self):
-        return _BatchAccumulator()
+    def process(self, element, *args, **kwargs):
+        self.buffer.append(element)
+        if len(self.buffer) > self.buffer_size:
+            self._flush_buffer()
 
-    def add_input(self, accumulator, element, *args, **kwargs):
-        accumulator.batch.append(element)
-        if len(accumulator.batch) >= self.buffer_size:
-            self._index(accumulator)
-        return accumulator
+    def finish_bundle(self):
+        self._flush_buffer()
 
-    def merge_accumulators(self, accumulators, *args, **kwargs):
-        for a in accumulators[1:]:
-            accumulators[0].index_count += a.index_count
-            accumulators[0].batch.extend(a.batch)
+    # def create_accumulator(self):
+    #     return _BatchAccumulator()
+    #
+    # def add_input(self, accumulator, element, *args, **kwargs):
+    #     accumulator.batch.append(element)
+    #     if len(accumulator.batch) >= self.buffer_size:
+    #         self._index(accumulator)
+    #     return accumulator
+    #
+    # def merge_accumulators(self, accumulators, *args, **kwargs):
+    #     for a in accumulators[1:]:
+    #         accumulators[0].index_count += a.index_count
+    #         accumulators[0].batch.extend(a.batch)
+    #
+    #         if len(accumulators[0].batch) >= self.buffer_size:
+    #             self._index(accumulators[0])
+    #
+    #     return accumulators[0]
+    #
+    # def extract_output(self, accumulator, *args, **kwargs):
+    #     if len(accumulator.batch) > 0:
+    #         self._index(accumulator)
+    #
+    #     return accumulator.index_count
 
-            if len(accumulators[0].batch) >= self.buffer_size:
-                self._index(accumulators[0])
-
-        return accumulators[0]
-
-    def extract_output(self, accumulator, *args, **kwargs):
-        if len(accumulator.batch) > 0:
-            self._index(accumulator)
-
-        return accumulator.index_count
-
-    def _index(self, accumulator):
+    def _flush_buffer(self):
         retry = 0
-        batch = accumulator.batch
         errors = []
 
-        batch.sort(key=lambda x: x.get('_id', ''))
+        self.buffer.sort(key=lambda x: x.get('_id', ''))
 
         while retry < self.max_retries:
             try:
@@ -120,17 +128,15 @@ class _ElasticsearchBulkSink(beam.CombineFn):
 
                 # We are retrying failed documents already, so don't let streaming_bulk retry
                 # HTTP 429 errors, since that would mess with the result order.
-                for i, (ok, info) in enumerate(streaming_bulk(self.client, batch, **self.bulk_args)):
-                    if ok:
-                        accumulator.index_count += 1
-                    else:
-                        to_retry.append(batch[i])
+                for i, (ok, info) in enumerate(streaming_bulk(self.client, self.buffer, **self.bulk_args)):
+                    if not ok:
+                        to_retry.append(self.buffer[i])
                         errors.append(info)
 
                 if not to_retry:
                     return
 
-                batch = to_retry
+                self.buffer = to_retry
 
             except TransportError as e:
                 logger.error('Elasticsearch error (attempt %s/%s): %s', retry + 1, self.max_retries, e.error)
@@ -140,7 +146,7 @@ class _ElasticsearchBulkSink(beam.CombineFn):
                     break
                 logger.error('Retrying with exponential backoff in %s seconds...', self.initial_backoff * (2 ** retry))
             finally:
-                accumulator.batch.clear()
+                self.buffer.clear()
 
             time.sleep(min(self.max_backoff, self.initial_backoff * (2 ** retry)))
             retry += 1
