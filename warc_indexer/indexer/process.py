@@ -25,8 +25,8 @@ import apache_beam as beam
 import apache_beam.typehints.typehints as t
 
 from fastwarc import warc
+from apache_beam.metrics import Metrics
 from resiliparse.parse.encoding import bytes_to_str, detect_encoding, detect_mime
-from resiliparse.process_guard import time_guard, ExecutionTimeout
 from resiliparse.extract.html2text import extract_plain_text
 from resiliparse.parse.html import HTMLTree
 from resiliparse.parse.lang import detect_fast as lang_detect_fast
@@ -43,29 +43,47 @@ class SkipRecord(Exception):
 MULTI_SPACE_REGEX = re.compile(r'\s{2,}')
 
 
+class ProcessRecords(beam.PTransform):
+    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, always_index_meta: bool = False):
+        """
+        Process a collection of WARC records and turn them into Elasticsearch index actions.
+
+        :param doc_id_prefix: document UUID prefix
+        :param meta_index: meta index name (required for index action creation)
+        :param data_index: daata index name (required for index action creation)
+        :param always_index_meta: always index a document's metadata, even if the payload document is skipped
+        """
+        super().__init__()
+        self.do_fn = ProcessRecord(doc_id_prefix, meta_index, data_index, always_index_meta)
+
+    def expand(self, pcoll):
+        return pcoll | beam.ParDo(self.do_fn)
+
+
 # noinspection PyAbstractClass
 class ProcessRecord(beam.DoFn):
-    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str):
+    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, always_index_meta: bool = False):
         super().__init__()
         self.doc_id_prefix = doc_id_prefix
         self.meta_index = meta_index
         self.data_index = data_index
+        self.always_index_meta = always_index_meta
+        self.counter = Metrics.counter(self.__class__, 'warc_record_counter')
 
     # noinspection PyMethodOverriding
-    def process(self, element: t.Tuple[str, warc.WarcRecord]) -> \
-            t.Iterable[t.KV[str, t.Tuple[t.Dict[str, t.Any], t.Dict[str, t.Any]]]]:
+    def process(self, element: t.Tuple[str, warc.WarcRecord]) -> t.Iterable[t.Dict[str, t.Any]]:
         """
-        Process WARC record and turn it into Elasticsearch index actions.
+        Process a single WARC record and turn it into Elasticsearch index actions.
 
         :param element: tuple of file name, WARCRecord
-        :return: key-value pair of UUID, (Metadata, Payload)
+        :return: (metadata action, payload action) or empty iterable
         """
 
-        # with time_guard(90, grace_period=60):
-        try:
-            file_name, warc_record = element    # type: str, warc.WarcRecord
-            doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
+        self.counter.inc(1)
 
+        file_name, warc_record = element  # type: str, warc.WarcRecord
+        doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
+        try:
             if not warc_record.headers.get('Content-Type', '').startswith('application/http'):
                 logger.info('Skipping document %s, reason: Not an HTTP response', doc_id)
                 return
@@ -91,18 +109,18 @@ class ProcessRecord(beam.DoFn):
             idx_id = index_uuid(record_time, warc_record.stream_pos, file_name, webis_id)
             content_bytes = warc_record.reader.read()
 
+            payload = None
+            meta = self.create_metadata(webis_id, file_name, warc_record, content_bytes)
             try:
-                meta = self.create_metadata(webis_id, file_name, warc_record, content_bytes)
                 payload = self.create_payload(webis_id, meta, content_bytes)
-                yield idx_id, (
-                    index_action(idx_id, self.meta_index, meta),
-                    index_action(idx_id, self.data_index, payload)
-                )
             except SkipRecord as reason:
                 logger.info('Skipping document %s, reason: %s', doc_id, reason)
 
-        # except ExecutionTimeout:
-        #     logger.info('Skipping document %s, reason: Execution timeout', doc_id)
+            if payload is not None or self.always_index_meta:
+                yield index_action(idx_id, self.meta_index, meta)
+            if payload is not None:
+                yield index_action(idx_id, self.data_index, payload)
+
         except Exception as e:
             logger.error('Skipping failed document %s', doc_id)
             logger.exception(e)
@@ -274,7 +292,7 @@ WS_REGEX = re.compile(r'\s+')
 
 def ws_collapse(text):
     """Collapse white space and trim input string."""
-    return WS_REGEX.sub(text, ' ').strip()
+    return WS_REGEX.sub(' ', text).strip()
 
 
 def get_document_title(html_tree: HTMLTree) -> str:

@@ -49,6 +49,12 @@ class ElasticsearchBulkSink(beam.PTransform):
         return pcoll | beam.CombineGlobally(self._bulk_sink).with_fanout(self._fanout).without_defaults()
 
 
+class _BatchAccumulator:
+    def __init__(self):
+        self.index_count = 0
+        self.batch = []
+
+
 # noinspection PyAbstractClass
 class _ElasticsearchBulkSink(beam.CombineFn):
     def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff,
@@ -76,34 +82,33 @@ class _ElasticsearchBulkSink(beam.CombineFn):
         self.client = Elasticsearch(**self.es_args)
 
     def create_accumulator(self):
-        return []
+        return _BatchAccumulator()
 
     def add_input(self, accumulator, element, *args, **kwargs):
-        accumulator.append(element)
-        if len(accumulator) >= self.buffer_size:
+        accumulator.batch.append(element)
+        if len(accumulator.batch) >= self.buffer_size:
             self._index(accumulator)
-            accumulator.clear()
         return accumulator
 
     def merge_accumulators(self, accumulators, *args, **kwargs):
         for a in accumulators[1:]:
-            accumulators[0].extend(a)
+            accumulators[0].index_count += a.index_count
+            accumulators[0].batch.extend(a.batch)
 
-            if len(accumulators[0]) >= self.buffer_size:
+            if len(accumulators[0].batch) >= self.buffer_size:
                 self._index(accumulators[0])
-                accumulators[0].clear()
 
         return accumulators[0]
 
     def extract_output(self, accumulator, *args, **kwargs):
-        if len(accumulator) > 0:
+        if len(accumulator.batch) > 0:
             self._index(accumulator)
-            accumulator.clear()
 
-        return []
+        return accumulator.index_count
 
-    def _index(self, batch):
+    def _index(self, accumulator):
         retry = 0
+        batch = accumulator.batch
         errors = []
 
         batch.sort(key=lambda x: x.get('_id', ''))
@@ -116,7 +121,9 @@ class _ElasticsearchBulkSink(beam.CombineFn):
                 # We are retrying failed documents already, so don't let streaming_bulk retry
                 # HTTP 429 errors, since that would mess with the result order.
                 for i, (ok, info) in enumerate(streaming_bulk(self.client, batch, **self.bulk_args)):
-                    if not ok:
+                    if ok:
+                        accumulator.index_count += 1
+                    else:
                         to_retry.append(batch[i])
                         errors.append(info)
 
@@ -132,6 +139,8 @@ class _ElasticsearchBulkSink(beam.CombineFn):
                         raise e
                     break
                 logger.error('Retrying with exponential backoff in %s seconds...', self.initial_backoff * (2 ** retry))
+            finally:
+                accumulator.batch.clear()
 
             time.sleep(min(self.max_backoff, self.initial_backoff * (2 ** retry)))
             retry += 1
