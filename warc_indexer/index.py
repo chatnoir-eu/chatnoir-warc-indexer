@@ -83,8 +83,9 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
 @click.argument('meta-index')
 @click.argument('data-index')
 @click.argument('id-prefix')
+@click.option('--always-index-meta', is_flag=True, help='Index metadata even if document is skipped')
 @click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
-def index(input_glob, meta_index, data_index, id_prefix, beam_args):
+def index(input_glob, meta_index, data_index, id_prefix, beam_args, always_index_meta):
     """
     Index WARC contents.
 
@@ -110,7 +111,7 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args):
             pipeline
             | 'Iterate WARCs' >> WarcInput(input_glob, warc_args=dict(record_types=int(WarcRecordType.response)))
             | 'Window' >> beam.WindowInto(window.FixedWindows(60))
-            | 'Process Records' >> ProcessRecords(id_prefix, meta_index, data_index)
+            | 'Process Records' >> ProcessRecords(id_prefix, meta_index, data_index, always_index_meta)
             | 'Index Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'], ignore_persistent_errors=True)
         )
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
