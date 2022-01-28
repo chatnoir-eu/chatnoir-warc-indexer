@@ -48,14 +48,7 @@ class ElasticsearchBulkSink(beam.PTransform):
         return pcoll | beam.ParDo(self._bulk_sink)
 
 
-class _BatchAccumulator:
-    def __init__(self):
-        self.index_count = 0
-        self.batch = []
-
-
 # noinspection PyAbstractClass
-# class _ElasticsearchBulkSink(beam.CombineFn):
 class _ElasticsearchBulkSink(beam.DoFn):
     def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff,
                  request_timeout, ignore_persistent_errors):
@@ -89,31 +82,6 @@ class _ElasticsearchBulkSink(beam.DoFn):
 
     def finish_bundle(self):
         self._flush_buffer()
-
-    # def create_accumulator(self):
-    #     return _BatchAccumulator()
-    #
-    # def add_input(self, accumulator, element, *args, **kwargs):
-    #     accumulator.batch.append(element)
-    #     if len(accumulator.batch) >= self.buffer_size:
-    #         self._index(accumulator)
-    #     return accumulator
-    #
-    # def merge_accumulators(self, accumulators, *args, **kwargs):
-    #     for a in accumulators[1:]:
-    #         accumulators[0].index_count += a.index_count
-    #         accumulators[0].batch.extend(a.batch)
-    #
-    #         if len(accumulators[0].batch) >= self.buffer_size:
-    #             self._index(accumulators[0])
-    #
-    #     return accumulators[0]
-    #
-    # def extract_output(self, accumulator, *args, **kwargs):
-    #     if len(accumulator.batch) > 0:
-    #         self._index(accumulator)
-    #
-    #     return accumulator.index_count
 
     def _flush_buffer(self):
         retry = 0
