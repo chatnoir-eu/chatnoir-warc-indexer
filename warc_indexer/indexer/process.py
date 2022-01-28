@@ -62,13 +62,15 @@ class ProcessRecords(beam.PTransform):
 
 # noinspection PyAbstractClass
 class ProcessRecord(beam.DoFn):
-    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, always_index_meta: bool = False):
+    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, always_index_meta: bool = False,
+                 max_payload_size: int = 1024 * 1024):
         super().__init__()
         self.doc_id_prefix = doc_id_prefix
         self.meta_index = meta_index
         self.data_index = data_index
         self.always_index_meta = always_index_meta
         self.counter = Metrics.counter(self.__class__, 'warc_record_counter')
+        self.max_payload_size = max_payload_size
 
     # noinspection PyMethodOverriding
     def process(self, element: t.Tuple[str, warc.WarcRecord]) -> t.Iterable[t.Dict[str, t.Any]]:
@@ -83,47 +85,54 @@ class ProcessRecord(beam.DoFn):
 
         file_name, warc_record = element  # type: str, warc.WarcRecord
         doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
+
+        idx_id = None
+        payload = None
+        meta = None
+
         try:
+            # Always skip non-HTTP responses, even if always_index_meta is True
             if not warc_record.headers.get('Content-Type', '').startswith('application/http'):
-                logger.info('Skipping document %s, reason: Not an HTTP response', doc_id)
-                return
-
-            if warc_record.content_length > 1024 * 1024:
-                logger.info('Skipping document %s, reason: Document too big (%s bytes)',
-                            doc_id, warc_record.content_length)
-                return
-
-            if warc_record.content_length < 500:
-                logger.info('Skipping document %s, reason: Document too short (%s bytes)',
-                            doc_id, warc_record.content_length)
-                return
-
-            if not warc_record.http_content_type or \
-                    warc_record.http_content_type.lower() not in ['text/html', 'application/xhtml+xml', 'text/plain']:
-                logger.info('Skipping document %s, reason: Wrong Content-Type (%s)',
-                            doc_id, warc_record.http_content_type)
-                return
+                if self.always_index_meta:
+                    logger.warning(
+                        'No meta document created for non-HTTP response despite "always create meta" setting.')
+                raise SkipRecord('Not an HTTP response')
 
             webis_id = webis_uuid(self.doc_id_prefix, doc_id)
             record_time = int(date_parse(warc_record.headers.get('WARC-Date')).timestamp() * 1000)
             idx_id = index_uuid(record_time, warc_record.stream_pos, file_name, webis_id)
-            content_bytes = warc_record.reader.read()
+            content_bytes = warc_record.reader.read(self.max_payload_size)
 
-            payload = None
+            # Always create meta object
             meta = self.create_metadata(webis_id, file_name, warc_record, content_bytes)
-            try:
-                payload = self.create_payload(webis_id, meta, content_bytes)
-            except SkipRecord as reason:
-                logger.info('Skipping document %s, reason: %s', doc_id, reason)
 
-            if payload is not None or self.always_index_meta:
+            if not warc_record.http_content_type or \
+                    warc_record.http_content_type.lower() not in ['text/html', 'application/xhtml+xml', 'text/plain']:
+                raise SkipRecord(f'Wrong Content-Type ({warc_record.http_content_type})')
+
+            if warc_record.content_length > self.max_payload_size:
+                raise SkipRecord(f'Document too big ({warc_record.content_length} bytes)')
+
+            if warc_record.content_length < 200:
+                raise SkipRecord(f'Document too short ({warc_record.content_length} bytes)')
+
+            payload = self.create_payload(webis_id, meta, content_bytes)
+
+        except SkipRecord as reason:
+            logger.info('Skipping document %s, reason: %s', doc_id, reason)
+
+        except Exception as e:
+            logger.error('Skipping failed document %s. Error was:', doc_id)
+            logger.exception(e)
+
+        finally:
+            if idx_id is None:
+                return
+
+            if meta is not None and (payload is not None or self.always_index_meta):
                 yield index_action(idx_id, self.meta_index, meta)
             if payload is not None:
                 yield index_action(idx_id, self.data_index, payload)
-
-        except Exception as e:
-            logger.error('Skipping failed document %s', doc_id)
-            logger.exception(e)
 
     @staticmethod
     def create_metadata(doc_id, file_name: str, warc_record: warc.WarcRecord, content_bytes: bytes):
