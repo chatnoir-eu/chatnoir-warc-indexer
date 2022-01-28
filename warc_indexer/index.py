@@ -84,8 +84,9 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
 @click.argument('data-index')
 @click.argument('id-prefix')
 @click.option('--always-index-meta', is_flag=True, help='Index metadata even if document is skipped')
+@click.option('--quirks-mode', is_flag=True, help='Enable WARC quirks mode (mainly for ClueWeb09)')
 @click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
-def index(input_glob, meta_index, data_index, id_prefix, beam_args, always_index_meta):
+def index(input_glob, meta_index, data_index, id_prefix, beam_args, always_index_meta, quirks_mode):
     """
     Index WARC contents.
 
@@ -109,9 +110,12 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, always_index
     with beam.Pipeline(options=options) as pipeline:
         (
             pipeline
-            | 'Iterate WARCs' >> WarcInput(input_glob, warc_args=dict(record_types=int(WarcRecordType.response)))
-            | 'Window' >> beam.WindowInto(window.FixedWindows(60))
-            | 'Process Records' >> ProcessRecords(id_prefix, meta_index, data_index, always_index_meta)
+            | 'Iterate WARCs' >> WarcInput(input_glob, warc_args=dict(
+                record_types=int(WarcRecordType.response), strict_mode=not quirks_mode))
+            | 'Window' >> beam.WindowInto(window.FixedWindows(30))
+            | 'Process Records' >> ProcessRecords(id_prefix, meta_index, data_index,
+                                                  always_index_meta=always_index_meta,
+                                                  trust_http_content_type=quirks_mode)
             | 'Index Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'], ignore_persistent_errors=True)
         )
     click.echo(f'Time taken: {monotonic() - start:.2f}s')

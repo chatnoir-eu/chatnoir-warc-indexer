@@ -41,10 +41,12 @@ class SkipRecord(Exception):
 
 
 MULTI_SPACE_REGEX = re.compile(r'\s{2,}')
+MAX_DOCUMENT_SIZE = 1024 * 1024
 
 
 class ProcessRecords(beam.PTransform):
-    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, always_index_meta: bool = False):
+    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, always_index_meta: bool = False,
+                 max_payload_size: int = MAX_DOCUMENT_SIZE, trust_http_content_type: bool = False):
         """
         Process a collection of WARC records and turn them into Elasticsearch index actions.
 
@@ -52,9 +54,11 @@ class ProcessRecords(beam.PTransform):
         :param meta_index: meta index name (required for index action creation)
         :param data_index: daata index name (required for index action creation)
         :param always_index_meta: always index a document's metadata, even if the payload document is skipped
+        :param trust_http_content_type: unconditionally trust HTTP Content-Type, don't perform check for binary response
         """
         super().__init__()
-        self.do_fn = ProcessRecord(doc_id_prefix, meta_index, data_index, always_index_meta)
+        self.do_fn = ProcessRecord(doc_id_prefix, meta_index, data_index, always_index_meta,
+                                   max_payload_size, trust_http_content_type)
 
     def expand(self, pcoll):
         return pcoll | beam.ParDo(self.do_fn)
@@ -62,8 +66,8 @@ class ProcessRecords(beam.PTransform):
 
 # noinspection PyAbstractClass
 class ProcessRecord(beam.DoFn):
-    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, always_index_meta: bool = False,
-                 max_payload_size: int = 1024 * 1024):
+    def __init__(self, doc_id_prefix, meta_index: str, data_index: str, always_index_meta: bool = False,
+                 max_payload_size: int = MAX_DOCUMENT_SIZE, trust_http_content_type: bool = False):
         super().__init__()
         self.doc_id_prefix = doc_id_prefix
         self.meta_index = meta_index
@@ -71,6 +75,7 @@ class ProcessRecord(beam.DoFn):
         self.always_index_meta = always_index_meta
         self.counter = Metrics.counter(self.__class__, 'warc_record_counter')
         self.max_payload_size = max_payload_size
+        self.trust_http_content_type = trust_http_content_type
 
     # noinspection PyMethodOverriding
     def process(self, element: t.Tuple[str, warc.WarcRecord]) -> t.Iterable[t.Dict[str, t.Any]]:
@@ -173,8 +178,7 @@ class ProcessRecord(beam.DoFn):
 
         return meta
 
-    @staticmethod
-    def create_payload(doc_id, metadata: t.Dict[str, str], content_bytes: bytes):
+    def create_payload(self, doc_id, metadata: t.Dict[str, str], content_bytes: bytes):
         """
         Parse WARC record payload into an index document.
 
@@ -184,9 +188,10 @@ class ProcessRecord(beam.DoFn):
         :return: index document dict
         """
 
-        mime_type = detect_mime(content_bytes)
-        if mime_type not in ['text/html', 'application/xhtml+xml', 'text/plain']:
-            raise SkipRecord(f'Document does not look like a text document (looks like {mime_type}).')
+        if not self.trust_http_content_type:
+            mime_type = detect_mime(content_bytes)
+            if mime_type not in ['text/html', 'application/xhtml+xml', 'text/plain']:
+                raise SkipRecord(f'Document does not look like a text document (looks like {mime_type}).')
 
         content_str = bytes_to_str(content_bytes, metadata['content_encoding'])
 
