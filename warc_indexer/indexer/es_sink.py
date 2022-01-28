@@ -44,7 +44,7 @@ class ElasticsearchBulkSink(beam.PTransform):
                                                  max_backoff, request_timeout, ignore_persistent_errors)
 
     def expand(self, pcoll):
-        return pcoll | beam.CombineGlobally(self._bulk_sink).without_defaults()
+        return pcoll | beam.CombinePerKey(self._bulk_sink)
 
 
 class _BatchAccumulator:

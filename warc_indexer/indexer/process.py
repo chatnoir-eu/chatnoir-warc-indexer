@@ -78,12 +78,12 @@ class ProcessRecord(beam.DoFn):
         self.trust_http_content_type = trust_http_content_type
 
     # noinspection PyMethodOverriding
-    def process(self, element: t.Tuple[str, warc.WarcRecord]) -> t.Iterable[t.Dict[str, t.Any]]:
+    def process(self, element: t.Tuple[str, warc.WarcRecord]) -> t.Iterable[t.KV[str, t.Dict[str, t.Any]]]:
         """
         Process a single WARC record and turn it into Elasticsearch index actions.
 
         :param element: tuple of file name, WARCRecord
-        :return: (metadata action, payload action) or empty iterable
+        :return: iterable of (index name, index action) KV pairs
         """
 
         self.counter.inc(1)
@@ -135,9 +135,9 @@ class ProcessRecord(beam.DoFn):
                 return
 
             if meta is not None and (payload is not None or self.always_index_meta):
-                yield index_action(idx_id, self.meta_index, meta)
+                yield self.meta_index, index_action(idx_id, self.meta_index, meta)
             if payload is not None:
-                yield index_action(idx_id, self.data_index, payload)
+                yield self.data_index, index_action(idx_id, self.data_index, payload)
 
     @staticmethod
     def create_metadata(doc_id, file_name: str, warc_record: warc.WarcRecord, content_bytes: bytes):
