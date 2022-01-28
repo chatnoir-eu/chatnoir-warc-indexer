@@ -24,7 +24,11 @@ MAPPING = {
         },
         "warc_ip_address": {
             "type": "ip"
-        }
+        },
+        "http_date": {
+            "type": "date",
+            "format": "date_time_no_millis"
+        },
     },
     "dynamic_templates": [
         {

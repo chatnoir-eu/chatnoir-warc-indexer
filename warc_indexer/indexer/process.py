@@ -99,7 +99,7 @@ class ProcessRecord(beam.DoFn):
                 raise SkipRecord('Not an HTTP response')
 
             webis_id = webis_uuid(self.doc_id_prefix, doc_id)
-            record_time = int(date_parse(warc_record.headers.get('WARC-Date')).timestamp() * 1000)
+            record_time = int(date_parse(clip_warc_date(warc_record.headers.get('WARC-Date'))).timestamp() * 1000)
             idx_id = index_uuid(record_time, warc_record.stream_pos, file_name, webis_id)
             content_bytes = warc_record.reader.read(self.max_payload_size)
 
@@ -148,6 +148,11 @@ class ProcessRecord(beam.DoFn):
 
         http_content_length = warc_record.content_length
         encoding = warc_record.http_charset or detect_encoding(content_bytes)
+        http_date = None
+        try:
+            http_date = date_parse(warc_record.http_headers.get('Date')).isoformat()
+        except Exception as e:
+            logger.warning('Error parsing HTTP Date header: %s', str(e))
 
         meta = {
             'uuid': doc_id,
@@ -158,6 +163,7 @@ class ProcessRecord(beam.DoFn):
             'content_length': warc_record.headers.get('Content-Length'),
             'http_content_length': http_content_length,
             'http_content_type': warc_record.http_content_type,
+            'http_date': http_date,
             'content_encoding': encoding
         }
 
