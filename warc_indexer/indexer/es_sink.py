@@ -25,7 +25,7 @@ logger = logging.getLogger()
 
 
 class ElasticsearchBulkSink(beam.PTransform):
-    def __init__(self, es_args, buffer_size=3200, chunk_size=400, max_retries=10, initial_backoff=2,
+    def __init__(self, es_args, buffer_size=3200, chunk_size=800, max_retries=10, initial_backoff=2,
                  max_backoff=600, request_timeout=240, ignore_persistent_errors=False):
         """
         Elasticsearch bulk indexing sink.
@@ -44,18 +44,23 @@ class ElasticsearchBulkSink(beam.PTransform):
                                                  max_backoff, request_timeout, ignore_persistent_errors)
 
     def expand(self, pcoll):
-        # return pcoll | beam.CombineGlobally(self._bulk_sink).without_defaults()
-        return pcoll | beam.ParDo(self._bulk_sink)
+        return pcoll | beam.CombineGlobally(self._bulk_sink).without_defaults()
+
+
+class _BatchAccumulator:
+    def __init__(self):
+        self.index_count = 0
+        self.failed_count = 0
+        self.buffer = []
 
 
 # noinspection PyAbstractClass
-class _ElasticsearchBulkSink(beam.DoFn):
+class _ElasticsearchBulkSink(beam.CombineFn):
     def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff,
                  request_timeout, ignore_persistent_errors):
         super().__init__()
 
         self.buffer_size = buffer_size
-        self.buffer = []
 
         self.es_args = es_args
         self.client = None
@@ -75,19 +80,37 @@ class _ElasticsearchBulkSink(beam.DoFn):
     def setup(self):
         self.client = Elasticsearch(**self.es_args)
 
-    def process(self, element, *args, **kwargs):
-        self.buffer.append(element)
-        if len(self.buffer) > self.buffer_size:
-            self._flush_buffer()
+    def create_accumulator(self):
+        return _BatchAccumulator()
 
-    def finish_bundle(self):
-        self._flush_buffer()
+    def add_input(self, accumulator, element, *args, **kwargs):
+        accumulator.buffer.append(element)
+        if len(accumulator.buffer) >= self.buffer_size:
+            self._flush_buffer(accumulator)
+        return accumulator
 
-    def _flush_buffer(self):
+    def merge_accumulators(self, accumulators, *args, **kwargs):
+        for a in accumulators[1:]:
+            accumulators[0].index_count += a.index_count
+            accumulators[0].failed_count += a.failed_count
+            accumulators[0].buffer.extend(a.buffer)
+
+            if len(accumulators[0].buffer) >= self.buffer_size:
+                self._flush_buffer(accumulators[0])
+
+        return accumulators[0]
+
+    def extract_output(self, accumulator, *args, **kwargs):
+        if len(accumulator.buffer) > 0:
+            self._flush_buffer(accumulator)
+
+        return {'indexed': accumulator.index_count, 'failed': accumulator.failed_count}
+
+    def _flush_buffer(self, accumulator):
         retry = 0
         errors = []
 
-        self.buffer.sort(key=lambda x: x.get('_id', ''))
+        accumulator.buffer.sort(key=lambda x: x.get('_id', ''))
 
         while retry < self.max_retries:
             try:
@@ -96,15 +119,17 @@ class _ElasticsearchBulkSink(beam.DoFn):
 
                 # We are retrying failed documents already, so don't let streaming_bulk retry
                 # HTTP 429 errors, since that would mess with the result order.
-                for i, (ok, info) in enumerate(streaming_bulk(self.client, self.buffer, **self.bulk_args)):
+                for i, (ok, info) in enumerate(streaming_bulk(self.client, accumulator.buffer, **self.bulk_args)):
                     if not ok:
-                        to_retry.append(self.buffer[i])
+                        to_retry.append(accumulator.buffer[i])
                         errors.append(info)
+                    else:
+                        accumulator.index_count += 1
 
                 if not to_retry:
                     return
 
-                self.buffer = to_retry
+                accumulator.buffer = to_retry
 
             except TransportError as e:
                 logger.error('Elasticsearch error (attempt %s/%s): %s', retry + 1, self.max_retries, e.error)
@@ -114,7 +139,8 @@ class _ElasticsearchBulkSink(beam.DoFn):
                     break
                 logger.error('Retrying with exponential backoff in %s seconds...', self.initial_backoff * (2 ** retry))
             finally:
-                self.buffer.clear()
+                accumulator.failed_count += len(errors)
+                accumulator.buffer.clear()
 
             time.sleep(min(self.max_backoff, self.initial_backoff * (2 ** retry)))
             retry += 1
