@@ -250,27 +250,38 @@ class ProcessRecord(beam.DoFn):
         return index_doc
 
 
+def urlsafe_b64(input_str):
+    """
+    Make a Base64 input string URL-safe by replacing + with _ and / with -.
+
+    :param input_str: raw Base64 string
+    :return: URL-safe string translation
+    """
+    return input_str.translate({47: 45, 43: 95})
+
+
 def webis_uuid(corpus_prefix: str, internal_id: str) -> str:
     """
-    Calculate a Webis document UUID based on a corpus prefix and
+    Calculate a URL-safe Webis document UUID based on a corpus prefix and
     an internal (not necessarily universally unique) doc ID.
 
     :param corpus_prefix: corpus prefix (e.g., clueweb09, cc15, ...)
     :param internal_id: internal doc ID (e.g., clueweb09-en0044-22-32198)
-    :return: Webis UUID as truncated Base64 string
+    :return: Webis UUID as truncated and URL-safe Base64 string
     """
-    return b64encode(uuid.uuid5(uuid.NAMESPACE_URL, ':'.join((corpus_prefix, internal_id))).bytes)[:-2].decode()
+    return urlsafe_b64(b64encode(uuid.uuid5(
+        uuid.NAMESPACE_URL, ':'.join((corpus_prefix, internal_id))).bytes)[:-2].decode())
 
 
 def index_uuid(unix_time_ms, warc_pos, warc_name, doc_id):
     """
-    Calculate an index-friendly time-based UUIDv1 for a document.
+    Calculate an index-friendly and URL-safe time-based UUIDv1 for a document.
 
     :param unix_time_ms: 64-bit UNIX timestamp of the document in milliseconds
     :param warc_pos: character offset in the WARC file
     :param warc_name: WARC file name string
     :param doc_id: document Webis UUID string
-    :return: index UUID as truncated Base64 string
+    :return: index UUID as truncated and URL-safe Base64 string
     """
     mask_low = (1 << 32) - 1
     mask_mid = ((1 << 16) - 1) << 32
@@ -289,7 +300,7 @@ def index_uuid(unix_time_ms, warc_pos, warc_name, doc_id):
     node = int.from_bytes(name_hash + id_hash, 'big')
 
     u = uuid.UUID(fields=(time_low, time_mid, time_hi_version, clock_seq_hi_variant, clock_seq_low, node))
-    return b64encode(u.bytes)[:-2].decode()
+    return urlsafe_b64(b64encode(u.bytes)[:-2].decode())
 
 
 def clip_warc_date(date_val: str) -> str:
