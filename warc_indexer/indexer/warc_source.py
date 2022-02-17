@@ -28,8 +28,10 @@ from apache_beam.utils import retry
 from apache_beam.options import pipeline_options
 from apache_beam.options.value_provider import RuntimeValueProvider
 import apache_beam.transforms.window as window
+
 from fastwarc.warc import ArchiveIterator
 from resiliparse.itertools import warc_retry
+import redis
 
 try:
     import boto3
@@ -43,15 +45,23 @@ logger = logging.getLogger()
 
 
 class WarcInput(beam.PTransform):
-    def __init__(self, file_pattern, warc_args=None, freeze=True):
+    def __init__(self, file_pattern, warc_args=None, freeze=False, redis_host=None, redis_prefix='WARC_Input_'):
         """
+        WARC reader input source.
+
+        If ``redis_host`` is set, the names of completed WARC files will be cached to a Redis instance, so
+        a failed job can be resumed later. Any WARC names present in the cache will be resumed at their last
+        read position or skipped if they have been fully read.
+
         :param file_pattern: input file glob pattern
         :param warc_args: arguments to pass to :class:`fastwarc.warc.ArchiveIterator`
-        :param freeze: freeze returned records
+        :param freeze: freeze returned records (required if returned records are not consumed immediately)
+        :param redis_host: a dict with Redis host data that can be passed to construct a :class:`redis.Redis` instance.
+        :param redis_prefix: Redis key prefix
         """
         super().__init__()
         self._file_matcher = MatchFiles(file_pattern)
-        self._warc_reader = _WarcReader(warc_args, freeze)
+        self._warc_reader = _WarcReader(warc_args, freeze, redis_host, redis_prefix)
 
     def expand(self, pcoll):
         return pcoll | self._file_matcher | beam.Reshuffle() | beam.ParDo(self._warc_reader)
@@ -74,10 +84,13 @@ class _WarcReader(beam.DoFn):
     WARC file input source.
     """
 
-    def __init__(self, warc_args, freeze):
+    def __init__(self, warc_args, freeze, redis_host, redis_prefix):
         super().__init__()
         self._warc_args = warc_args
         self._freeze = freeze
+        self._redis_client = None       # type: redis.Redis
+        self._redis_host = redis_host
+        self._redis_prefix = redis_prefix
 
     # noinspection PyMethodOverriding
     def process(self, file_meta, tracker=beam.DoFn.RestrictionParam(_WarcRestrictionProvider())):
@@ -99,7 +112,20 @@ class _WarcReader(beam.DoFn):
                     stream.seek(pos)
                 return stream
 
-            stream = stream_factory(tracker.current_restriction().start)
+            starting_pos = tracker.current_restriction().start
+
+            redis_key = '_'.join((self._redis_prefix, file_meta.path))
+            if self._redis_client is not None:
+                p = self._redis_client.get(redis_key) or -1
+                if p >= tracker.current_restriction().stop:
+                    logger.info('WARC found completed WARC name in cache, skipping file.')
+                    tracker.try_claim(tracker.current_restriction().stop)
+                    return
+                if -1 < p < tracker.current_restriction().stop:
+                    logger.info('Found WARC name in cache, resuming at position %s.', starting_pos)
+                    starting_pos = int(starting_pos)
+
+            stream = stream_factory(starting_pos)
             logger.info('Starting WARC file %s', file_meta.path)
             for record in warc_retry(ArchiveIterator(stream, **self._warc_args), stream_factory, seek=False):
                 logger.debug('Reading WARC record %s', record.record_id)
@@ -111,6 +137,10 @@ class _WarcReader(beam.DoFn):
                 yield window.TimestampedValue((file_meta.path, record), int(time.time()))
             else:
                 tracker.try_claim(tracker.current_restriction().stop)
+
+            if self._redis_client is not None:
+                self._redis_client.set(redis_key, tracker.current_restriction().stop)
+
             logger.info('Completed WARC file %s', file_meta.path)
         except Exception as e:
             if record:
@@ -122,6 +152,10 @@ class _WarcReader(beam.DoFn):
         finally:
             if stream and not stream.closed:
                 stream.close()
+
+    def setup(self):
+        if self._redis_host is not None:
+            self._redis_client = redis.Redis(**self._redis_host)
 
     def _open_file(self, file_name):
         """Get input file stream."""

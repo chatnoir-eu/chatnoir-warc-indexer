@@ -112,6 +112,9 @@ class _ElasticsearchBulkSink(beam.CombineFn):
 
         accumulator.buffer.sort(key=lambda x: x.get('_id', ''))
 
+        accumulator.buffer.clear()
+        return
+
         while retry < self.max_retries:
             try:
                 errors = []
