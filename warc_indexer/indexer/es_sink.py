@@ -17,7 +17,7 @@ import time
 
 import apache_beam as beam
 import apache_beam.typehints.typehints as t
-from elasticsearch import Elasticsearch, TransportError
+from elasticsearch import exceptions as es_exc, Elasticsearch
 from elasticsearch.helpers import streaming_bulk
 
 
@@ -26,7 +26,7 @@ logger = logging.getLogger()
 
 class ElasticsearchBulkSink(beam.PTransform):
     def __init__(self, es_args, buffer_size=3200, chunk_size=800, max_retries=10, initial_backoff=2,
-                 max_backoff=600, request_timeout=240, ignore_persistent_errors=True):
+                 max_backoff=600, request_timeout=240, ignore_persistent_400=True):
         """
         Elasticsearch bulk indexing sink.
 
@@ -37,11 +37,11 @@ class ElasticsearchBulkSink(beam.PTransform):
         :param initial_backoff: initial retry backoff
         :param max_backoff: maximum retry backoff
         :param request_timeout: Elasticsearch request timeout
-        :param ignore_persistent_errors: ignore errors that persist after `max_retries` and continue
+        :param ignore_persistent_400: ignore persistent ``RequestError``s, i.e., errors with HTTP code 400
         """
         super().__init__()
         self._bulk_sink = _ElasticsearchBulkSink(es_args, buffer_size, chunk_size, max_retries, initial_backoff,
-                                                 max_backoff, request_timeout, ignore_persistent_errors)
+                                                 max_backoff, request_timeout, ignore_persistent_400)
 
     def expand(self, pcoll):
         return pcoll | beam.ParDo(self._bulk_sink)
@@ -57,7 +57,7 @@ class _BatchAccumulator:
 # noinspection PyAbstractClass
 class _ElasticsearchBulkSink(beam.DoFn):
     def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff,
-                 request_timeout, ignore_persistent_errors):
+                 request_timeout, ignore_persistent_400):
         super().__init__()
 
         self.buffer_size = buffer_size
@@ -76,7 +76,7 @@ class _ElasticsearchBulkSink(beam.DoFn):
         self.max_retries = max_retries
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
-        self.ignore_persistent_errors = ignore_persistent_errors
+        self.ignore_persistent_400 = ignore_persistent_400
 
     def setup(self):
         self.client = Elasticsearch(**self.es_args)
@@ -118,10 +118,10 @@ class _ElasticsearchBulkSink(beam.DoFn):
 
                     self.buffer = to_retry
 
-                except TransportError as e:
+                except es_exc.TransportError as e:
                     logger.error('Elasticsearch error (attempt %s/%s): %s', retry + 1, self.max_retries, e.error)
                     if retry == self.max_retries - 1:
-                        if not self.ignore_persistent_errors:
+                        if not isinstance(e, es_exc.RequestError) or not self.ignore_persistent_400:
                             raise e
                         break
                     logger.error('Retrying with exponential backoff in %s seconds...',
