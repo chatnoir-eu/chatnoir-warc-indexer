@@ -379,6 +379,7 @@ MAPPING = {
 
 SETTINGS = {
     "refresh_interval": "-1",
+    "routing.allocation.total_shards_per_node": "1",
     "analysis": {
         "filter": {
             "host_stop_filter": {

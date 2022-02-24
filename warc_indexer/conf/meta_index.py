@@ -54,5 +54,6 @@ MAPPING = {
 
 SETTINGS = {
     "codec": "best_compression",
-    "refresh_interval": "-1"
+    "refresh_interval": "-1",
+    "routing.allocation.total_shards_per_node": "1"
 }
