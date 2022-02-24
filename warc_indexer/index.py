@@ -85,13 +85,15 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
 @click.argument('data-index')
 @click.argument('id-prefix')
 @click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
+@click.option('-p', '--index-parallelism', type=int,
+              help='Indexing parallelism (same as processing parallelism if unset, will cause a reshuffle)')
 @click.option('-s', '--max-content-length', type=int, default=1024 * 1024, show_default=True,
               help='Maximum record Content-Length in bytes')
 @click.option('--always-index-meta', is_flag=True, help='Index metadata even if document is skipped')
 @click.option('--quirks-mode', is_flag=True, help='Enable WARC quirks mode (mainly for ClueWeb09)')
 @click.option('--redis-prefix', help='Redis key prefix if WARC name caching is configured',
               default='ChatNoirIndexer_WARC_', show_default=True)
-def index(input_glob, meta_index, data_index, id_prefix, beam_args, max_content_length,
+def index(input_glob, meta_index, data_index, id_prefix, beam_args, index_parallelism, max_content_length,
           always_index_meta, quirks_mode, redis_prefix):
     """
     Index WARC contents.
@@ -137,8 +139,13 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, max_content_
                                                       trust_http_content_type=quirks_mode)
         )
 
-        meta | 'Index Meta Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'])
-        payload | 'Index Payload Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'])
+        if index_parallelism is not None:
+            index_parallelism = min(1, index_parallelism // 2)
+
+        meta | 'Index Meta Records' >> ElasticsearchBulkSink(
+            get_config()['elasticsearch'], parallelism=index_parallelism)
+        payload | 'Index Payload Records' >> ElasticsearchBulkSink(
+            get_config()['elasticsearch'], parallelism=index_parallelism)
 
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
 

@@ -25,12 +25,13 @@ logger = logging.getLogger()
 
 
 class ElasticsearchBulkSink(beam.PTransform):
-    def __init__(self, es_args, buffer_size=3200, chunk_size=800, max_retries=10, initial_backoff=2,
+    def __init__(self, es_args, parallelism=None, buffer_size=3200, chunk_size=800, max_retries=10, initial_backoff=2,
                  max_backoff=600, request_timeout=240, ignore_persistent_400=True):
         """
         Elasticsearch bulk indexing sink.
 
         :param es_args: Elasticsearch client arguments
+        :param parallelism: reshuffle to achieve the desired level of parallelism
         :param buffer_size: internal buffer size
         :param chunk_size: indexing chunk size
         :param max_retries: maximum number of retries on recoverable failures
@@ -42,8 +43,11 @@ class ElasticsearchBulkSink(beam.PTransform):
         super().__init__()
         self._bulk_sink = _ElasticsearchBulkSink(es_args, buffer_size, chunk_size, max_retries, initial_backoff,
                                                  max_backoff, request_timeout, ignore_persistent_400)
+        self.parallelism = parallelism
 
     def expand(self, pcoll):
+        if self.parallelism:
+            pcoll |= beam.Reshuffle(self.parallelism)
         return pcoll | beam.ParDo(self._bulk_sink)
 
 
