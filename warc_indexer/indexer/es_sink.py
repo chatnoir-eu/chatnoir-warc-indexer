@@ -26,7 +26,7 @@ logger = logging.getLogger()
 
 class ElasticsearchBulkSink(beam.PTransform):
     def __init__(self, es_args, buffer_size=3200, chunk_size=800, max_retries=10, initial_backoff=2,
-                 max_backoff=600, request_timeout=240, ignore_persistent_errors=False):
+                 max_backoff=600, request_timeout=240, ignore_persistent_errors=True):
         """
         Elasticsearch bulk indexing sink.
 

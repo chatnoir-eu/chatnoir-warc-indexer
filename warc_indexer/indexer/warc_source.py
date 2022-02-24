@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from hashlib import sha256
 import io
 import logging
 import time
@@ -45,7 +46,8 @@ logger = logging.getLogger()
 
 
 class WarcInput(beam.PTransform):
-    def __init__(self, file_pattern, warc_args=None, freeze=False, redis_host=None, redis_prefix='WARC_Input_'):
+    def __init__(self, file_pattern, warc_args=None, freeze=True, overly_long_keep_meta=False,
+                 redis_host=None, redis_prefix='WARC_Input_'):
         """
         WARC reader input source.
 
@@ -56,12 +58,14 @@ class WarcInput(beam.PTransform):
         :param file_pattern: input file glob pattern
         :param warc_args: arguments to pass to :class:`fastwarc.warc.ArchiveIterator`
         :param freeze: freeze returned records (required if returned records are not consumed immediately)
+        :param overly_long_keep_meta: also return records that exceed a configured ``max_content_length``
+                                      (in ``warc_args``), but strip them of their payload
         :param redis_host: a dict with Redis host data that can be passed to construct a :class:`redis.Redis` instance.
         :param redis_prefix: Redis key prefix
         """
         super().__init__()
         self._file_matcher = MatchFiles(file_pattern)
-        self._warc_reader = _WarcReader(warc_args, freeze, redis_host, redis_prefix)
+        self._warc_reader = _WarcReader(warc_args, freeze, overly_long_keep_meta, redis_host, redis_prefix)
 
     def expand(self, pcoll):
         return pcoll | self._file_matcher | beam.Reshuffle() | beam.ParDo(self._warc_reader)
@@ -84,13 +88,26 @@ class _WarcReader(beam.DoFn):
     WARC file input source.
     """
 
-    def __init__(self, warc_args, freeze, redis_host, redis_prefix):
+    def __init__(self, warc_args, freeze, overly_long_keep_meta, redis_host, redis_prefix):
         super().__init__()
         self._warc_args = warc_args
         self._freeze = freeze
-        self._redis_client = None       # type: redis.Redis
+        self._max_content_length = None
+        if overly_long_keep_meta and 'max_content_length' in self._warc_args:
+            self._max_content_length = self._warc_args['max_content_length']
+            del self._warc_args['max_content_length']
+
+        self._redis_client = None       # type: redis.Redis or None
         self._redis_host = redis_host
         self._redis_prefix = redis_prefix
+
+    def setup(self):
+        if self._redis_host is not None:
+            self._redis_client = redis.Redis(**self._redis_host)
+
+    def teardown(self):
+        if self._redis_client is not None:
+            self._redis_client.close()
 
     # noinspection PyMethodOverriding
     def process(self, file_meta, tracker=beam.DoFn.RestrictionParam(_WarcRestrictionProvider())):
@@ -112,25 +129,37 @@ class _WarcReader(beam.DoFn):
                     stream.seek(pos)
                 return stream
 
-            starting_pos = tracker.current_restriction().start
+            restriction = tracker.current_restriction()
+            resume_pos = restriction.start
 
-            redis_key = '_'.join((self._redis_prefix, file_meta.path))
+            # If a Redis cache has been configured, skip already-processed splits
+            redis_key = self._redis_prefix + sha256(file_meta.path.encode()).digest().hex()
             if self._redis_client is not None:
-                p = self._redis_client.get(redis_key) or -1
-                if p >= tracker.current_restriction().stop:
-                    logger.info('WARC found completed WARC name in cache, skipping file.')
-                    tracker.try_claim(tracker.current_restriction().stop)
-                    return
-                if -1 < p < tracker.current_restriction().stop:
-                    logger.info('Found WARC name in cache, resuming at position %s.', starting_pos)
-                    starting_pos = int(starting_pos)
+                for s, e in [m.split(b':') for m in self._redis_client.smembers(redis_key)]:
+                    s, e = int(s), int(e)
+                    if s <= restriction.start < restriction.stop <= e:
+                        logger.info('WARC found in cache: Skipping already processed split.')
+                        tracker.try_claim(tracker.current_restriction().stop)
+                        return
+                    if s <= restriction.start < e < restriction.stop:
+                        resume_pos = e
+                        logger.info('WARC found in cache: Resuming partially processed split at offset %s...',
+                                    resume_pos)
+                        break
 
-            stream = stream_factory(starting_pos)
+            stream = stream_factory(resume_pos)
             logger.info('Starting WARC file %s', file_meta.path)
             for record in warc_retry(ArchiveIterator(stream, **self._warc_args), stream_factory, seek=False):
                 logger.debug('Reading WARC record %s', record.record_id)
                 if not tracker.try_claim(record.stream_pos):
                     break
+
+                if self._max_content_length is not None and record.content_length > self._max_content_length:
+                    # Max length exceeded, but we still want to return a metadata record
+                    logger.debug("Stripping long record %s (%s bytes) of its payload.",
+                                 record.record_id, record.content_length)
+                    record.reader.consume()
+
                 if self._freeze:
                     record.freeze()
 
@@ -139,7 +168,8 @@ class _WarcReader(beam.DoFn):
                 tracker.try_claim(tracker.current_restriction().stop)
 
             if self._redis_client is not None:
-                self._redis_client.set(redis_key, tracker.current_restriction().stop)
+                # Store split boundaries in Redis cache
+                self._redis_client.sadd(redis_key, ':'.join((str(restriction.start), str(restriction.stop))).encode())
 
             logger.info('Completed WARC file %s', file_meta.path)
         except Exception as e:
@@ -152,10 +182,6 @@ class _WarcReader(beam.DoFn):
         finally:
             if stream and not stream.closed:
                 stream.close()
-
-    def setup(self):
-        if self._redis_host is not None:
-            self._redis_client = redis.Redis(**self._redis_host)
 
     def _open_file(self, file_name):
         """Get input file stream."""
@@ -214,6 +240,32 @@ class EfficientBoto3Client(boto3_client.Client):
         self._download_request = None
         self._download_stream = None
         self._download_pos = 0
+
+    # TODO: Remove once https://issues.apache.org/jira/browse/BEAM-13980 is merged
+    def get_object_metadata(self, request):
+        """Retrieves an object's metadata.
+
+        Args:
+          request: (GetRequest) input message
+
+        Returns:
+          (Object) The response message.
+        """
+        kwargs = {'Bucket': request.bucket, 'Key': request.object}
+
+        try:
+            boto_response = self.client.head_object(**kwargs)
+        except Exception as e:
+            raise messages.S3ClientError(str(e), get_http_error_code(e))
+
+        item = messages.Item(
+            boto_response['ETag'],
+            request.object,
+            boto_response['LastModified'],
+            boto_response['ContentLength'],
+            boto_response['ContentType'])
+
+        return item
 
     # noinspection PyProtectedMember
     def get_stream(self, request, start):

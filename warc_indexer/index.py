@@ -19,6 +19,7 @@ import os
 import sys
 from time import monotonic
 import uuid
+import redis
 
 import apache_beam as beam
 from apache_beam.transforms import window
@@ -83,10 +84,15 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
 @click.argument('meta-index')
 @click.argument('data-index')
 @click.argument('id-prefix')
+@click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
+@click.option('-s', '--max-content-length', type=int, default=1024 * 1024, show_default=True,
+              help='Maximum record Content-Length in bytes')
 @click.option('--always-index-meta', is_flag=True, help='Index metadata even if document is skipped')
 @click.option('--quirks-mode', is_flag=True, help='Enable WARC quirks mode (mainly for ClueWeb09)')
-@click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
-def index(input_glob, meta_index, data_index, id_prefix, beam_args, always_index_meta, quirks_mode):
+@click.option('--redis-prefix', help='Redis key prefix if WARC name caching is configured',
+              default='ChatNoirIndexer_WARC_', show_default=True)
+def index(input_glob, meta_index, data_index, id_prefix, beam_args, max_content_length,
+          always_index_meta, quirks_mode, redis_prefix):
     """
     Index WARC contents.
 
@@ -105,20 +111,60 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, always_index
     opt_dict.update(get_config()['pipeline_opts'])
     options = PipelineOptions(**opt_dict)
 
+    warc_args = dict(
+        record_types=int(WarcRecordType.response),
+        strict_mode=not quirks_mode,
+        max_content_length=max_content_length
+    )
+    redis_prefix = ''.join((redis_prefix, meta_index, '_'))
+
     click.echo(f'Starting pipeline to index "{input_glob}"...')
     start = monotonic()
+
     with beam.Pipeline(options=options) as pipeline:
-        (
-            pipeline
-            | 'Iterate WARCs' >> WarcInput(input_glob, warc_args=dict(
-                record_types=int(WarcRecordType.response), strict_mode=not quirks_mode))
-            | 'Window' >> beam.WindowInto(window.FixedWindows(30))
-            | 'Process Records' >> ProcessRecords(id_prefix, meta_index, data_index,
-                                                  always_index_meta=always_index_meta,
-                                                  trust_http_content_type=quirks_mode)
-            | 'Index Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'], ignore_persistent_errors=True)
+        meta, payload = (
+                pipeline
+                | 'Iterate WARCs' >> WarcInput(input_glob,
+                                               warc_args=warc_args,
+                                               freeze=True,
+                                               overly_long_keep_meta=always_index_meta,
+                                               redis_host=get_config().get('redis'),
+                                               redis_prefix=redis_prefix)
+                | 'Window' >> beam.WindowInto(window.FixedWindows(30))
+                | 'Process Records' >> ProcessRecords(id_prefix, meta_index, data_index,
+                                                      max_payload_size=max_content_length,
+                                                      always_index_meta=always_index_meta,
+                                                      trust_http_content_type=quirks_mode)
         )
+
+        meta | 'Index Meta Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'])
+        payload | 'Index Payload Records' >> ElasticsearchBulkSink(get_config()['elasticsearch'])
+
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
+
+
+@main.command()
+@click.option('--prefix', help='Redis key prefix to delete', default='ChatNoirIndexer_WARC_', show_default=True)
+@click.option('--host', help='Override Redis host')
+@click.option('--port', help='Override Redis port')
+def clear_redis_cache(prefix, host, port):
+    """Clear all WARC entries with the configured prefix from the Redis cache."""
+    cfg = get_config().get('redis')
+    if not cfg:
+        click.echo('Redis host not configured.', err=True)
+        return
+
+    if host:
+        cfg['host'] = host
+    if port:
+        cfg['port'] = port
+
+    redis_client = redis.Redis(**cfg)
+    count = 0
+    for k in redis_client.scan_iter(prefix + '*'):
+        redis_client.delete(k)
+        count += 1
+    click.echo(f'Cleared {count} cache entries.')
 
 
 if __name__ == '__main__':

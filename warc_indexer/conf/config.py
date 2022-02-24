@@ -14,7 +14,14 @@ CONFIG = dict(
         s3_endpoint_url='your S3 endpoint',
         s3_access_key_id='your access key',
         s3_secret_access_key='your secret key',
-    )
+    ),
+
+    # Redis WARC name cache opts
+    # redis=dict(
+    #     host='localhost',
+    #     port=6379,
+    #     password=None
+    # )
 )
 
 
