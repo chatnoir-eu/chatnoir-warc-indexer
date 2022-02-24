@@ -45,29 +45,40 @@ MAX_DOCUMENT_SIZE = 1024 * 1024
 
 
 class ProcessRecords(beam.PTransform):
-    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, always_index_meta: bool = False,
-                 max_payload_size: int = MAX_DOCUMENT_SIZE, trust_http_content_type: bool = False):
+    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, max_payload_size: int = MAX_DOCUMENT_SIZE,
+                 always_index_meta: bool = False, trust_http_content_type: bool = False):
         """
         Process a collection of WARC records and turn them into Elasticsearch index actions.
+        Returns two partitions of index action dicts, one for the meta index and one for the data index.
 
         :param doc_id_prefix: document UUID prefix
         :param meta_index: meta index name (required for index action creation)
-        :param data_index: daata index name (required for index action creation)
+        :param data_index: data index name (required for index action creation)
+        :param max_payload_size: maximum payload size to process in bytes
         :param always_index_meta: always index a document's metadata, even if the payload document is skipped
         :param trust_http_content_type: unconditionally trust HTTP Content-Type, don't perform check for binary response
         """
         super().__init__()
-        self.do_fn = ProcessRecord(doc_id_prefix, meta_index, data_index, always_index_meta,
-                                   max_payload_size, trust_http_content_type)
+        self.do_fn = ProcessRecord(doc_id_prefix=doc_id_prefix,
+                                   meta_index=meta_index,
+                                   data_index=data_index,
+                                   max_payload_size=max_payload_size,
+                                   always_index_meta=always_index_meta,
+                                   trust_http_content_type=trust_http_content_type)
+
+        self._partitions = [meta_index, data_index]
 
     def expand(self, pcoll):
-        return pcoll | beam.ParDo(self.do_fn)
+        a, b = pcoll | beam.ParDo(self.do_fn) | beam.Partition(
+            lambda e, _: self._partitions.index(e[0]), len(self._partitions))
+
+        return a | 'Meta Records' >> beam.Values(), b | 'Payload Records' >> beam.Values()
 
 
 # noinspection PyAbstractClass
 class ProcessRecord(beam.DoFn):
-    def __init__(self, doc_id_prefix, meta_index: str, data_index: str, always_index_meta: bool = False,
-                 max_payload_size: int = MAX_DOCUMENT_SIZE, trust_http_content_type: bool = False):
+    def __init__(self, doc_id_prefix, meta_index: str, data_index: str, max_payload_size: int = MAX_DOCUMENT_SIZE,
+                 always_index_meta: bool = False, trust_http_content_type: bool = False):
         super().__init__()
         self.doc_id_prefix = doc_id_prefix
         self.meta_index = meta_index
@@ -124,7 +135,7 @@ class ProcessRecord(beam.DoFn):
             payload = self.create_payload(webis_id, meta, content_bytes)
 
         except SkipRecord as reason:
-            logger.info('Skipping document %s, reason: %s', doc_id, reason)
+            logger.debug('Skipping document %s, reason: %s', doc_id, reason)
 
         except Exception as e:
             logger.error('Skipping failed document %s. Error was:', doc_id)

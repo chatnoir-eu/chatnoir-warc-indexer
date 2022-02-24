@@ -44,7 +44,7 @@ class ElasticsearchBulkSink(beam.PTransform):
                                                  max_backoff, request_timeout, ignore_persistent_errors)
 
     def expand(self, pcoll):
-        return pcoll | beam.CombinePerKey(self._bulk_sink)
+        return pcoll | beam.ParDo(self._bulk_sink)
 
 
 class _BatchAccumulator:
@@ -55,12 +55,13 @@ class _BatchAccumulator:
 
 
 # noinspection PyAbstractClass
-class _ElasticsearchBulkSink(beam.CombineFn):
+class _ElasticsearchBulkSink(beam.DoFn):
     def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff,
                  request_timeout, ignore_persistent_errors):
         super().__init__()
 
         self.buffer_size = buffer_size
+        self.buffer = []
 
         self.es_args = es_args
         self.client = None
@@ -80,80 +81,59 @@ class _ElasticsearchBulkSink(beam.CombineFn):
     def setup(self):
         self.client = Elasticsearch(**self.es_args)
 
-    def create_accumulator(self):
-        return _BatchAccumulator()
+    def teardown(self):
+        assert len(self.buffer) == 0
+        if self.client:
+            self.client.transport.close()
 
-    def add_input(self, accumulator, element, *args, **kwargs):
-        accumulator.buffer.append(element)
-        if len(accumulator.buffer) >= self.buffer_size:
-            self._flush_buffer(accumulator)
-        return accumulator
+    def process(self, element, *args, **kwargs):
+        self.buffer.append(element)
+        if len(self.buffer) >= self.buffer_size:
+            self._flush_buffer()
 
-    def merge_accumulators(self, accumulators, *args, **kwargs):
-        for a in accumulators[1:]:
-            accumulators[0].index_count += a.index_count
-            accumulators[0].failed_count += a.failed_count
-            accumulators[0].buffer.extend(a.buffer)
+    def finish_bundle(self):
+        if len(self.buffer) > 0:
+            self._flush_buffer()
 
-            if len(accumulators[0].buffer) >= self.buffer_size:
-                self._flush_buffer(accumulators[0])
-
-        return accumulators[0]
-
-    def extract_output(self, accumulator, *args, **kwargs):
-        if len(accumulator.buffer) > 0:
-            self._flush_buffer(accumulator)
-
-        return {'indexed': accumulator.index_count, 'failed': accumulator.failed_count}
-
-    def _flush_buffer(self, accumulator):
+    def _flush_buffer(self):
         retry = 0
         errors = []
+        self.buffer.sort(key=lambda x: x.get('_id', ''))
 
-        accumulator.buffer.sort(key=lambda x: x.get('_id', ''))
+        try:
+            while retry < self.max_retries:
+                try:
+                    errors = []
+                    to_retry = []
 
-        accumulator.buffer.clear()
-        return
+                    # We are retrying failed documents already, so don't let streaming_bulk retry
+                    # HTTP 429 errors, since that would mess with the result order.
+                    for i, (ok, info) in enumerate(streaming_bulk(self.client, self.buffer, **self.bulk_args)):
+                        if not ok:
+                            to_retry.append(self.buffer[i])
+                            errors.append(info)
 
-        while retry < self.max_retries:
-            try:
-                errors = []
-                to_retry = []
+                    if not to_retry:
+                        return
 
-                # We are retrying failed documents already, so don't let streaming_bulk retry
-                # HTTP 429 errors, since that would mess with the result order.
-                for i, (ok, info) in enumerate(streaming_bulk(self.client, accumulator.buffer, **self.bulk_args)):
-                    if not ok:
-                        to_retry.append(accumulator.buffer[i])
-                        errors.append(info)
-                    else:
-                        accumulator.index_count += 1
+                    self.buffer = to_retry
 
-                if not to_retry:
-                    return
+                except TransportError as e:
+                    logger.error('Elasticsearch error (attempt %s/%s): %s', retry + 1, self.max_retries, e.error)
+                    if retry == self.max_retries - 1:
+                        if not self.ignore_persistent_errors:
+                            raise e
+                        break
+                    logger.error('Retrying with exponential backoff in %s seconds...',
+                                 self.initial_backoff * (2 ** retry))
 
-                accumulator.buffer = to_retry
-
-            except TransportError as e:
-                logger.error('Elasticsearch error (attempt %s/%s): %s', retry + 1, self.max_retries, e.error)
-                if retry == self.max_retries - 1:
-                    if not self.ignore_persistent_errors:
-                        raise e
-                    break
-                logger.error('Retrying with exponential backoff in %s seconds...', self.initial_backoff * (2 ** retry))
-            finally:
-                accumulator.failed_count += len(errors)
-                accumulator.buffer.clear()
-
-            time.sleep(min(self.max_backoff, self.initial_backoff * (2 ** retry)))
-            retry += 1
+                time.sleep(min(self.max_backoff, self.initial_backoff * (2 ** retry)))
+                retry += 1
+        finally:
+            self.buffer.clear()
 
         logger.error('%s document(s) failed to index, giving up on batch.', len(errors))
         logger.error('Failed document(s): %s', errors)
-
-    def teardown(self):
-        if self.client:
-            self.client.transport.close()
 
 
 def index_action(doc_id: str, index: str, data: t.Dict[str, str]):
