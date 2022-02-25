@@ -135,20 +135,15 @@ class _WarcReader(beam.DoFn):
                     resume_pos = max(resume_pos, e)
                     logger.info('WARC found in cache: Resuming partially processed split at offset %s...', resume_pos)
 
-        stream = None
+        def stream_factory():
+            return self._open_file(file_meta.path)
+
         record = None
-
-        def stream_factory(pos):
-            nonlocal stream
-            stream = self._open_file(file_meta.path)
-            if pos != 0:
-                stream.seek(pos)
-            return stream
-
+        stream = None
         try:
-            stream = stream_factory(resume_pos)
             logger.info('Starting WARC file %s', file_meta.path)
-            for record in warc_retry(ArchiveIterator(stream, **self._warc_args), stream_factory, seek=False):
+            stream = stream_factory()
+            for record in warc_retry(ArchiveIterator(stream, **self._warc_args), stream_factory):
                 logger.debug('Reading WARC record %s', record.record_id)
                 resume_pos = record.stream_pos
                 if not tracker.try_claim(record.stream_pos):
