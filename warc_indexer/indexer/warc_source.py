@@ -118,39 +118,39 @@ class _WarcReader(beam.DoFn):
         :param tracker: input range tracker
         :return: tuple of (file name, WARC record)
         """
+        # If a Redis cache has been configured, skip already-processed splits
+        redis_key = self._redis_prefix + sha256(file_meta.path.encode()).digest().hex()
+
+        restriction = tracker.current_restriction()
+        resume_pos = restriction.start
+
+        if self._redis_client is not None:
+            for s, e in [m.split(b':') for m in self._redis_client.smembers(redis_key)]:
+                s, e = int(s), int(e)
+                if s <= restriction.start < restriction.stop <= e:
+                    logger.info('WARC found in cache: Skipping already processed split.')
+                    tracker.try_claim(tracker.current_restriction().stop)
+                    return
+                if s <= restriction.start < e < restriction.stop:
+                    resume_pos = max(resume_pos, e)
+                    logger.info('WARC found in cache: Resuming partially processed split at offset %s...', resume_pos)
 
         stream = None
         record = None
+
+        def stream_factory(pos):
+            nonlocal stream
+            stream = self._open_file(file_meta.path)
+            if pos != 0:
+                stream.seek(pos)
+            return stream
+
         try:
-            def stream_factory(pos):
-                nonlocal stream
-                stream = self._open_file(file_meta.path)
-                if pos != 0:
-                    stream.seek(pos)
-                return stream
-
-            restriction = tracker.current_restriction()
-            resume_pos = restriction.start
-
-            # If a Redis cache has been configured, skip already-processed splits
-            redis_key = self._redis_prefix + sha256(file_meta.path.encode()).digest().hex()
-            if self._redis_client is not None:
-                for s, e in [m.split(b':') for m in self._redis_client.smembers(redis_key)]:
-                    s, e = int(s), int(e)
-                    if s <= restriction.start < restriction.stop <= e:
-                        logger.info('WARC found in cache: Skipping already processed split.')
-                        tracker.try_claim(tracker.current_restriction().stop)
-                        return
-                    if s <= restriction.start < e < restriction.stop:
-                        resume_pos = e
-                        logger.info('WARC found in cache: Resuming partially processed split at offset %s...',
-                                    resume_pos)
-                        break
-
             stream = stream_factory(resume_pos)
             logger.info('Starting WARC file %s', file_meta.path)
             for record in warc_retry(ArchiveIterator(stream, **self._warc_args), stream_factory, seek=False):
                 logger.debug('Reading WARC record %s', record.record_id)
+                resume_pos = record.stream_pos
                 if not tracker.try_claim(record.stream_pos):
                     break
 
@@ -165,12 +165,8 @@ class _WarcReader(beam.DoFn):
 
                 yield window.TimestampedValue((file_meta.path, record), int(time.time()))
             else:
-                tracker.try_claim(tracker.current_restriction().stop)
-
-            if self._redis_client is not None:
-                # Store split boundaries in Redis cache
-                self._redis_client.sadd(redis_key, ':'.join((str(restriction.start), str(restriction.stop))).encode())
-
+                tracker.try_claim(restriction.stop)
+                resume_pos = restriction.stop
             logger.info('Completed WARC file %s', file_meta.path)
         except Exception as e:
             if record:
@@ -180,6 +176,10 @@ class _WarcReader(beam.DoFn):
                 logger.error('WARC reader failed in %s', file_meta.path)
             logger.exception(e)
         finally:
+            if self._redis_client is not None and resume_pos > restriction.start:
+                # Store split boundaries in Redis cache
+                self._redis_client.sadd(redis_key, ':'.join((str(restriction.start), str(resume_pos))).encode())
+
             if stream and not stream.closed:
                 stream.close()
 
