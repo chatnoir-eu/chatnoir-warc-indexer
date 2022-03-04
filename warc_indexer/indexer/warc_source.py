@@ -206,6 +206,36 @@ def get_http_error_code(exc):
     return None
 
 
+# TODO: Remove once https://issues.apache.org/jira/browse/BEAM-13980 is merged
+def get_object_metadata(self, request):
+    """Retrieves an object's metadata.
+
+    Args:
+      request: (GetRequest) input message
+
+    Returns:
+      (Object) The response message.
+    """
+    kwargs = {'Bucket': request.bucket, 'Key': request.object}
+
+    try:
+        boto_response = self.client.head_object(**kwargs)
+    except Exception as e:
+        raise messages.S3ClientError(str(e), get_http_error_code(e))
+
+    item = messages.Item(
+        boto_response['ETag'],
+        request.object,
+        boto_response['LastModified'],
+        boto_response['ContentLength'],
+        boto_response['ContentType'])
+
+    return item
+
+
+boto3_client.Client.get_object_metadata = get_object_metadata
+
+
 class EfficientBoto3Client(boto3_client.Client):
     # noinspection PyMissingConstructor
     def __init__(self, options, connect_timeout=60, read_timeout=240):
@@ -235,32 +265,6 @@ class EfficientBoto3Client(boto3_client.Client):
         self._download_request = None
         self._download_stream = None
         self._download_pos = 0
-
-    # TODO: Remove once https://issues.apache.org/jira/browse/BEAM-13980 is merged
-    def get_object_metadata(self, request):
-        """Retrieves an object's metadata.
-
-        Args:
-          request: (GetRequest) input message
-
-        Returns:
-          (Object) The response message.
-        """
-        kwargs = {'Bucket': request.bucket, 'Key': request.object}
-
-        try:
-            boto_response = self.client.head_object(**kwargs)
-        except Exception as e:
-            raise messages.S3ClientError(str(e), get_http_error_code(e))
-
-        item = messages.Item(
-            boto_response['ETag'],
-            request.object,
-            boto_response['LastModified'],
-            boto_response['ContentLength'],
-            boto_response['ContentType'])
-
-        return item
 
     # noinspection PyProtectedMember
     def get_stream(self, request, start):
