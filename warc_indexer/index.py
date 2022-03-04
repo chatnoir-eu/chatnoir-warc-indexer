@@ -93,8 +93,9 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
 @click.option('--quirks-mode', is_flag=True, help='Enable WARC quirks mode (mainly for ClueWeb09)')
 @click.option('--redis-prefix', help='Redis key prefix if WARC name caching is configured',
               default='ChatNoirIndexer_WARC_', show_default=True)
+@click.option('-n', '--dry-run', help='Run pipeline, but do not actually index anything.', is_flag=True)
 def index(input_glob, meta_index, data_index, id_prefix, beam_args, index_parallelism, max_content_length,
-          always_index_meta, quirks_mode, redis_prefix):
+          always_index_meta, quirks_mode, redis_prefix, dry_run):
     """
     Index WARC contents.
 
@@ -142,10 +143,16 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, index_parall
         if index_parallelism is not None:
             index_parallelism = min(1, index_parallelism // 2)
 
-        meta | 'Index Meta Records' >> ElasticsearchBulkSink(
-            get_config()['elasticsearch'], parallelism=index_parallelism)
-        payload | 'Index Payload Records' >> ElasticsearchBulkSink(
-            get_config()['elasticsearch'], parallelism=index_parallelism)
+        if not dry_run:
+            meta | 'Index Meta Records' >> ElasticsearchBulkSink(
+                get_config()['elasticsearch'], parallelism=index_parallelism)
+            payload | 'Index Payload Records' >> ElasticsearchBulkSink(
+                get_config()['elasticsearch'], parallelism=index_parallelism)
+        else:
+            meta | 'Index Meta Records (dry run)' >> beam.Map(
+                lambda e: logger.info('Indexing %s (dry run)', e['_id']))
+            payload | 'Index Payload Records (dry run)' >> beam.Map(
+                lambda e: logger.info('Indexing %s (dry run)', e['_id']))
 
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
 
