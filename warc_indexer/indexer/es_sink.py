@@ -16,6 +16,7 @@ import logging
 import time
 
 import apache_beam as beam
+from apache_beam.utils.windowed_value import WindowedValue
 import apache_beam.typehints.typehints as t
 from elasticsearch import exceptions as es_exc, Elasticsearch
 from elasticsearch.helpers import streaming_bulk
@@ -25,12 +26,25 @@ logger = logging.getLogger()
 
 
 class ElasticsearchBulkSink(beam.PTransform):
-    def __init__(self, es_args, parallelism=None, buffer_size=3200, chunk_size=800, max_retries=10, initial_backoff=2,
-                 max_backoff=600, request_timeout=240, ignore_persistent_400=True):
+    def __init__(self, es_args,
+                 update=False,
+                 parallelism=None,
+                 buffer_size=3200,
+                 chunk_size=800,
+                 max_retries=10,
+                 initial_backoff=2,
+                 max_backoff=600,
+                 request_timeout=240,
+                 ignore_persistent_400=True,
+                 dry_run=False,
+                 retain_fields=None):
         """
         Elasticsearch bulk indexing sink.
 
+        Returns the document IDs of successfully indexed documents.
+
         :param es_args: Elasticsearch client arguments
+        :param update: do a bulk UPDATE instead of a bulk INDEX (requires documents to exist)
         :param parallelism: reshuffle to achieve the desired level of parallelism
         :param buffer_size: internal buffer size
         :param chunk_size: indexing chunk size
@@ -39,10 +53,21 @@ class ElasticsearchBulkSink(beam.PTransform):
         :param max_backoff: maximum retry backoff
         :param request_timeout: Elasticsearch request timeout
         :param ignore_persistent_400: ignore persistent ``RequestError``s, i.e., errors with HTTP code 400
+        :param dry_run: discard documents and do not actually index them
+        :param retain_fields: instead of plain index IDs, map inputs to KV pairs retaining the specified index fields
         """
         super().__init__()
-        self._bulk_sink = _ElasticsearchBulkSink(es_args, buffer_size, chunk_size, max_retries, initial_backoff,
-                                                 max_backoff, request_timeout, ignore_persistent_400)
+        self._bulk_sink = _ElasticsearchBulkSink(es_args=es_args,
+                                                 update=update,
+                                                 buffer_size=buffer_size,
+                                                 chunk_size=chunk_size,
+                                                 max_retries=max_retries,
+                                                 initial_backoff=initial_backoff,
+                                                 max_backoff=max_backoff,
+                                                 request_timeout=request_timeout,
+                                                 ignore_persistent_400=ignore_persistent_400,
+                                                 dry_run=dry_run,
+                                                 retain_fields=retain_fields)
         self.parallelism = parallelism
 
     def expand(self, pcoll):
@@ -60,14 +85,25 @@ class _BatchAccumulator:
 
 # noinspection PyAbstractClass
 class _ElasticsearchBulkSink(beam.DoFn):
-    def __init__(self, es_args, buffer_size, chunk_size, max_retries, initial_backoff, max_backoff,
-                 request_timeout, ignore_persistent_400):
+    def __init__(self,
+                 es_args,
+                 update,
+                 buffer_size,
+                 chunk_size,
+                 max_retries,
+                 initial_backoff,
+                 max_backoff,
+                 request_timeout,
+                 ignore_persistent_400,
+                 dry_run,
+                 retain_fields):
         super().__init__()
 
         self.buffer_size = buffer_size
         self.buffer = []
 
         self.es_args = es_args
+        self.update = update
         self.client = None
         self.bulk_args = dict(
             chunk_size=chunk_size,
@@ -81,6 +117,8 @@ class _ElasticsearchBulkSink(beam.DoFn):
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
         self.ignore_persistent_400 = ignore_persistent_400
+        self.dry_run = dry_run
+        self.retain_fields = set(retain_fields) if retain_fields else None
 
     def setup(self):
         self.client = Elasticsearch(**self.es_args)
@@ -90,19 +128,36 @@ class _ElasticsearchBulkSink(beam.DoFn):
         if self.client:
             self.client.transport.close()
 
-    def process(self, element, *args, **kwargs):
-        self.buffer.append(element)
+    # noinspection PyIncorrectDocstring
+    def process(self, element, *args, timestamp=beam.DoFn.TimestampParam, window=beam.DoFn.WindowParam, **kwargs):
+        """
+        Add element to index buffer.
+        Returns an iterable of successfully index document IDs on buffer flush or ``None`` otherwise.
+        The returned IDs will be KV pairs of (document UUID, index UUID).
+
+        :param element: input index action
+        :return: iterable of indexed document IDs or ``None``
+        """
+
+        if self.dry_run:
+            val = element.get('_id', '')
+            if self.retain_fields:
+                val = val, {k: v for k, v in element.items() if k in self.retain_fields}
+            yield val
+            return
+
+        self.buffer.append((element, timestamp, window))
         if len(self.buffer) >= self.buffer_size:
-            self._flush_buffer()
+            yield from self._flush_buffer()
 
     def finish_bundle(self):
         if len(self.buffer) > 0:
-            self._flush_buffer()
+            yield from self._flush_buffer()
 
     def _flush_buffer(self):
         retry = 0
         errors = []
-        self.buffer.sort(key=lambda x: x.get('_id', ''))
+        self.buffer.sort(key=lambda x: x[0].get('_id', ''))
 
         try:
             while retry < self.max_retries:
@@ -112,10 +167,17 @@ class _ElasticsearchBulkSink(beam.DoFn):
 
                     # We are retrying failed documents already, so don't let streaming_bulk retry
                     # HTTP 429 errors, since that would mess with the result order.
-                    for i, (ok, info) in enumerate(streaming_bulk(self.client, self.buffer, **self.bulk_args)):
+                    buf_gen = (e[0] for e in self.buffer)
+                    for i, (ok, info) in enumerate(streaming_bulk(self.client, buf_gen, **self.bulk_args)):
                         if not ok:
                             to_retry.append(self.buffer[i])
                             errors.append(info)
+                        else:
+                            val = list(info.values())[0]['_id']
+                            if self.retain_fields:
+                                val = val, {k: v for k, v in self.buffer[i][0].items() if k in self.retain_fields}
+
+                            yield WindowedValue(val, self.buffer[i][1], self.buffer[i][2])
 
                     if not to_retry:
                         return
@@ -141,11 +203,22 @@ class _ElasticsearchBulkSink(beam.DoFn):
 
 
 def index_action(doc_id: str, index: str, data: t.Dict[str, str]):
+    """Create a bulk index action."""
     return {
         '_op_type': 'index',
         '_index': index,
         '_id': doc_id,
-        **data
+        **{k: v for k, v in data.items() if not k.startswith('_')}
+    }
+
+
+def update_action(doc_id: str, index: str, data: t.Dict[str, str]):
+    """Create a bulk update action."""
+    return {
+        '_op_type': 'update',
+        '_index': index,
+        '_id': doc_id,
+        'doc': {k: v for k, v in data.items() if not k.startswith('_')}
     }
 
 

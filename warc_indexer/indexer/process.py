@@ -40,13 +40,18 @@ class SkipRecord(Exception):
     pass
 
 
+SPACE_REGEX = re.compile(r'\s+')
 MULTI_SPACE_REGEX = re.compile(r'\s{2,}')
 MAX_DOCUMENT_SIZE = 1024 * 1024
 
 
 class ProcessRecords(beam.PTransform):
-    def __init__(self, doc_id_prefix: str, meta_index: str, data_index: str, max_payload_size: int = MAX_DOCUMENT_SIZE,
-                 always_index_meta: bool = False, trust_http_content_type: bool = False):
+    def __init__(self, doc_id_prefix: str,
+                 meta_index: str,
+                 data_index: str,
+                 max_payload_size: int = MAX_DOCUMENT_SIZE,
+                 always_index_meta: bool = False,
+                 trust_http_content_type: bool = False):
         """
         Process a collection of WARC records and turn them into Elasticsearch index actions.
         Returns two partitions of index action dicts, one for the meta index and one for the data index.
@@ -77,8 +82,13 @@ class ProcessRecords(beam.PTransform):
 
 # noinspection PyAbstractClass
 class ProcessRecord(beam.DoFn):
-    def __init__(self, doc_id_prefix, meta_index: str, data_index: str, max_payload_size: int = MAX_DOCUMENT_SIZE,
-                 always_index_meta: bool = False, trust_http_content_type: bool = False):
+    def __init__(self,
+                 doc_id_prefix,
+                 meta_index: str,
+                 data_index: str,
+                 max_payload_size: int = MAX_DOCUMENT_SIZE,
+                 always_index_meta: bool = False,
+                 trust_http_content_type: bool = False):
         super().__init__()
         self.doc_id_prefix = doc_id_prefix
         self.meta_index = meta_index
@@ -96,11 +106,13 @@ class ProcessRecord(beam.DoFn):
         :param element: tuple of file name, WARCRecord
         :return: iterable of (index name, index action) KV pairs
         """
+        if not element:
+            return
 
         self.counter.inc(1)
 
         file_name, warc_record = element  # type: str, warc.WarcRecord
-        doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.headers.get('WARC-Record-ID'))
+        doc_id = warc_record.headers.get('WARC-TREC-ID', warc_record.record_id)
 
         idx_id = None
         payload = None
@@ -284,6 +296,21 @@ def webis_uuid(corpus_prefix: str, internal_id: str) -> str:
         uuid.NAMESPACE_URL, ':'.join((corpus_prefix, internal_id))).bytes)[:-2].decode())
 
 
+# noinspection PyAbstractClass
+class MapKeysToWebisUUID(beam.DoFn):
+    def __init__(self, corpus_prefix):
+        """
+        Map element keys to Webis UUIDs.
+
+        :param corpus_prefix: corpus prefix (e.g., clueweb09, cc15, ...)
+        """
+        super().__init__()
+        self.corpus_prefix = corpus_prefix
+
+    def process(self, element: t.KV[str, t.Any], *args, **kwargs):
+        yield webis_uuid(self.corpus_prefix, element[0]), element[1]
+
+
 def index_uuid(unix_time_ms, warc_pos, warc_name, doc_id):
     """
     Calculate an index-friendly and URL-safe time-based UUIDv1 for a document.
@@ -412,3 +439,35 @@ def get_document_headings(html_tree: HTMLTree, max_level: int = 3) -> t.List[str
 
     headings = html_tree.head.query_selector_all(', '.join(f'h{i}' for i in range(1, max_level + 1)))
     return [ws_collapse(k.text) for k in headings]
+
+
+def map_id_val(line, val_type=float) -> t.Optional[t.KV[str, t.Any]]:
+    """
+    Map lines of <id><space><value> to KV pairs.
+
+    :param line: line as string
+    :param val_type: conversion type for the value
+    :return: iterable of a single KV pair (empty if line could not be split or value is not of ``val_type``)
+    """
+
+    try:
+        k, v = SPACE_REGEX.split(line, maxsplit=1)
+        yield k, val_type(v)
+    except ValueError:
+        return
+
+
+def map_val_id(line, val_type=float) -> t.Optional[t.KV[str, t.Any]]:
+    """
+    Map lines of <value><space><id> to KV pairs.
+
+    :param line: line as string
+    :param val_type: conversion type for the value
+    :return: iterable of a single KV pair (empty if line could not be split or value is not of ``val_type``)
+    """
+
+    try:
+        v, k = SPACE_REGEX.split(line, maxsplit=1)
+        yield k, val_type(v)
+    except ValueError:
+        return
