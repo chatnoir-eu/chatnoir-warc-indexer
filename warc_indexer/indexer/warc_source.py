@@ -19,13 +19,12 @@ import time
 
 import apache_beam as beam
 from apache_beam.io.aws.s3io import S3IO, S3Downloader
-from apache_beam.io.aws.clients.s3 import boto3_client, messages
+from apache_beam.io.aws.clients.s3 import boto3_client
 from apache_beam.io.filesystem import CompressionTypes
 from apache_beam.io.filesystemio import DownloaderStream
 from apache_beam.io.filesystems import FileSystems
 from apache_beam.io.fileio import MatchFiles
 from apache_beam.io.restriction_trackers import OffsetRange, OffsetRestrictionTracker
-from apache_beam.utils import retry
 from apache_beam.options import pipeline_options
 from apache_beam.options.value_provider import RuntimeValueProvider
 import apache_beam.transforms.window as window
@@ -190,10 +189,10 @@ class _WarcReader(beam.DoFn):
 
     # noinspection PyProtectedMember
     def _open_s3_stream(self, file_name, buffer_size=65536):
-        """Open S3 stream more efficiently than the standard Beam implementation."""
+        """Open S3 streams with custom Boto3 client."""
 
         options = FileSystems._pipeline_options or RuntimeValueProvider.runtime_options
-        s3_client = EfficientBoto3Client(options=options)
+        s3_client = Boto3Client(options=options)
         s3io = S3IO(client=s3_client, options=options)
 
         downloader = S3Downloader(s3io.client, file_name, buffer_size=buffer_size)
@@ -206,45 +205,14 @@ def get_http_error_code(exc):
     return None
 
 
-# TODO: Remove once https://issues.apache.org/jira/browse/BEAM-13980 is merged
-def get_object_metadata(self, request):
-    """Retrieves an object's metadata.
+class Boto3Client(boto3_client.Client):
+    """Boto3 client with custom settings."""
 
-    Args:
-      request: (GetRequest) input message
-
-    Returns:
-      (Object) The response message.
-    """
-    kwargs = {'Bucket': request.bucket, 'Key': request.object}
-
-    try:
-        boto_response = self.client.head_object(**kwargs)
-    except Exception as e:
-        raise messages.S3ClientError(str(e), get_http_error_code(e))
-
-    item = messages.Item(
-        boto_response['ETag'],
-        request.object,
-        boto_response['LastModified'],
-        boto_response['ContentLength'],
-        boto_response['ContentType'])
-
-    return item
-
-
-boto3_client.Client.get_object_metadata = get_object_metadata
-
-
-class EfficientBoto3Client(boto3_client.Client):
     # noinspection PyMissingConstructor
     def __init__(self, options, connect_timeout=60, read_timeout=240):
-        if boto3 is None:
-            raise ModuleNotFoundError('Missing boto3 requirement')
+        super().__init__(options)
 
-        if isinstance(options, pipeline_options.PipelineOptions):
-            options = options.get_all_options()
-
+        options = options.get_all_options()
         session = boto3.session.Session()
         self.client = session.client(
             service_name='s3',
@@ -261,67 +229,3 @@ class EfficientBoto3Client(boto3_client.Client):
                 read_timeout=read_timeout
             )
         )
-
-        self._download_request = None
-        self._download_stream = None
-        self._download_pos = 0
-
-    # noinspection PyProtectedMember
-    def get_stream(self, request, start):
-        """Opens a stream object starting at the given position.
-
-        Args:
-          request: (GetRequest) request
-          start: (int) start offset
-        Returns:
-          (Stream) Boto3 stream object.
-        """
-
-        if self._download_request and (
-                start != self._download_pos
-                or request.bucket != self._download_request.bucket
-                or request.object != self._download_request.object):
-            self._download_stream.close()
-            self._download_stream = None
-
-        # noinspection PyProtectedMember
-        if not self._download_stream or self._download_stream._raw_stream.closed:
-            try:
-                self._download_stream = self.client.get_object(
-                    Bucket=request.bucket,
-                    Key=request.object,
-                    Range='bytes={}-'.format(start))['Body']
-                self._download_request = request
-                self._download_pos = start
-            except Exception as e:
-                raise messages.S3ClientError(str(e), get_http_error_code(e))
-
-        return self._download_stream
-
-    @retry.with_exponential_backoff()
-    def get_range(self, request, start, end):
-        r"""Retrieves an object's contents.
-
-          Args:
-            request: (GetRequest) request
-            start: (int) start offset
-            end: (int) end offset (exclusive)
-          Returns:
-            (bytes) The response message.
-          """
-        for i in range(2):
-            try:
-                stream = self.get_stream(request, start)
-                data = stream.read(end - start)
-                self._download_pos += len(data)
-                return data
-            except Exception as e:
-                self._download_stream = None
-                self._download_request = None
-                if i == 0:
-                    # Read errors are likely with long-lived connections, retry immediately if a read fails once
-                    continue
-                if isinstance(e, messages.S3ClientError):
-                    e.code = 500
-                    raise e
-                raise messages.S3ClientError(str(e), get_http_error_code(e) or 500)
