@@ -22,7 +22,7 @@ import uuid
 import redis
 
 import apache_beam as beam
-from apache_beam.io import fileio, textio
+from apache_beam.io import textio
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.transforms import window
 import click
@@ -31,8 +31,8 @@ from elasticsearch.exceptions import TransportError
 from fastwarc.warc import WarcRecordType
 
 from warc_indexer.conf.config import get_config
-from warc_indexer.indexer.es_sink import ElasticsearchBulkSink, ensure_index, update_action
-from warc_indexer.indexer.process import MapKeysToWebisUUID, ProcessRecords, map_id_val, map_val_id
+from warc_indexer.indexer.es_sink import ElasticsearchBulkSink, ensure_index
+from warc_indexer.indexer.process import ProcessRecords, AddToRedisHash, map_id_val, map_val_id
 from warc_indexer.indexer.warc_source import WarcInput
 
 
@@ -78,6 +78,24 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
             click.echo(str(e), err=True)
 
 
+def _get_pipeline_options():
+    opt_dict = dict(
+        runner='FlinkRunner',
+        setup_file=os.path.join(os.path.dirname(os.path.dirname(__file__)), 'setup.py'),
+        environment_type='LOOPBACK',
+    )
+    opt_dict.update(get_config()['pipeline_opts'])
+    return PipelineOptions(**opt_dict)
+
+
+def _get_redis_cache_prefix(base_prefix, idx_name):
+    return ''.join((base_prefix, idx_name, '_'))
+
+
+def _get_redis_lookup_prefix(base_prefix, idx_name):
+    return ''.join((base_prefix, idx_name, '_LOOKUP_'))
+
+
 @main.command(context_settings=dict(
     ignore_unknown_options=True
 ))
@@ -86,8 +104,7 @@ def index_setup(meta_index, data_index, shards_meta, shards_data, replicas):
 @click.argument('data-index')
 @click.argument('id-prefix')
 @click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
-@click.option('--spam-ranks', help='File with spam ranks (ClueWeb format)')
-@click.option('--page-ranks', help='File with page ranks (ClueWeb format)')
+@click.option('-l', '--with-lookup', help='Look up additional pre-indexed data from Redis', is_flag=True)
 @click.option('-p', '--index-parallelism', type=int,
               help='Indexing parallelism (same as processing parallelism if unset, will cause a reshuffle)')
 @click.option('-s', '--max-content-length', type=int, default=1024 * 1024, show_default=True,
@@ -114,24 +131,24 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
     """
 
     sys.argv[1:] = beam_args
-    opt_dict = dict(
-        runner='FlinkRunner',
-        setup_file=os.path.join(os.path.dirname(os.path.dirname(__file__)), 'setup.py'),
-        environment_type='LOOPBACK',
-    )
-    opt_dict.update(get_config()['pipeline_opts'])
-    options = PipelineOptions(**opt_dict)
+    options = _get_pipeline_options()
 
+    index_parallelism = min(1, kwargs['index_parallelism'] // 2) if kwargs['index_parallelism'] else None
     warc_args = dict(
         record_types=int(WarcRecordType.response),
         strict_mode=not kwargs['quirks_mode'],
         max_content_length=kwargs['max_content_length']
     )
-    redis_prefix = ''.join((kwargs['redis_prefix'], meta_index, '_'))
-    index_parallelism = min(1, kwargs['index_parallelism'] // 2) if kwargs['index_parallelism'] else None
+    redis_cache_prefix = _get_redis_cache_prefix(kwargs['redis_prefix'], meta_index)
+    redis_lookup_prefix = _get_redis_lookup_prefix(kwargs['redis_prefix'], data_index)
+    redis_lookup_host = get_config().get('redis') if kwargs['with-lookup'] else None
 
     click.echo(f'Starting pipeline to index "{input_glob}"...')
     start = monotonic()
+
+    if kwargs['with-lookup'] and not get_config()['redis']:
+        click.echo('Redis host not configured', err=True)
+        sys.exit(1)
 
     with beam.Pipeline(options=options) as pipeline:
         # Index main metadata and payload documents
@@ -142,12 +159,14 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
                                                freeze=True,
                                                overly_long_keep_meta=kwargs['always_index_meta'],
                                                redis_host=get_config().get('redis'),
-                                               redis_prefix=redis_prefix)
+                                               redis_prefix=redis_cache_prefix)
                 | beam.WindowInto(window.FixedWindows(30))
                 | 'Process Records' >> ProcessRecords(id_prefix, meta_index, data_index,
                                                       max_payload_size=kwargs['max_content_length'],
                                                       always_index_meta=kwargs['always_index_meta'],
-                                                      trust_http_content_type=kwargs['quirks_mode'])
+                                                      trust_http_content_type=kwargs['quirks_mode'],
+                                                      redis_lookup_host=redis_lookup_host,
+                                                      redis_prefix=redis_lookup_prefix)
         )
 
         dry_run = kwargs['dry_run'] or kwargs['additional_only']
@@ -156,47 +175,64 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
         meta |= f'Index Meta Records{dry_run_str}' >> ElasticsearchBulkSink(
             get_config()['elasticsearch'], parallelism=index_parallelism, dry_run=dry_run)
         payload |= f'Index Payload Records{dry_run_str}' >> ElasticsearchBulkSink(
-            get_config()['elasticsearch'],
-            parallelism=index_parallelism, dry_run=dry_run, retain_fields=['uuid'])
+            get_config()['elasticsearch'], parallelism=index_parallelism, dry_run=dry_run)
 
-        # CoJoin additional data with index IDs after they have been indexed
-        additional_inputs = {}
-        if kwargs['spam_ranks']:
-            additional_inputs['spam_rank'] = (pipeline
-                                              | 'Match Spam Spam Inputs' >> fileio.MatchFiles(kwargs['spam_ranks'])
-                                              | 'Reshuffle Spam Rank Inputs' >> beam.Reshuffle()
-                                              | 'Read Spam Ranks' >> textio.ReadAllFromText()
-                                              | 'Map Spam Ranks' >> beam.ParDo(map_val_id, val_type=int)
-                                              | 'Map Spam Rank IDs' >> beam.ParDo(MapKeysToWebisUUID(id_prefix)))
+    click.echo(f'Time taken: {monotonic() - start:.2f}s')
 
-        if kwargs['page_ranks']:
-            additional_inputs['page_rank'] = (pipeline
-                                              | 'Match Page Rank Inputs' >> fileio.MatchFiles(kwargs['page_ranks'])
-                                              | 'Reshuffle Page Rank Inputs' >> beam.Reshuffle()
-                                              | 'Read Page Ranks' >> textio.ReadAllFromText()
-                                              | 'Map Page Ranks' >> beam.ParDo(map_id_val, val_type=float)
-                                              | 'Map Page Rank IDs' >> beam.ParDo(MapKeysToWebisUUID(id_prefix)))
 
-        if additional_inputs:
-            # Reverse map index and Webis UUID
-            additional_inputs['_id'] = payload | beam.Map(lambda e: (e[1]['uuid'], e[0]))
+@main.command(context_settings=dict(
+    ignore_unknown_options=True
+))
+@click.argument('data-index')
+@click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
+@click.option('--spam-ranks', help='File glob with spam ranks (ClueWeb format)')
+@click.option('--page-ranks', help='File glob with page ranks (ClueWeb format)')
+@click.option('--redis-prefix', help='Redis key prefix if WARC name caching is configured',
+              default='ChatNoirIndexer_WARC_', show_default=True)
+def prepare_lookups(data_index, beam_args, spam_ranks, page_ranks, redis_prefix):
+    """
+    Prepare additional data to be fed into an indexing job and persist them to Redis.
 
-            def map_to_update_actions(e):
-                if len(e) > 1 and '_id' in e and len(e['_id']) == 1:
-                    doc_id = e['_id'][0]
-                    data = {k: v[0] for k, v in e.items() if not k.startswith('_')}
-                    yield update_action(doc_id, data_index, data)
+    Additional index data such as spam ranks, page ranks, anchor texts etc. that are to be stored
+    alongside the main index documents need to be prepared beforehand for fast ID-based lookup
+    during indexing. The lookup entries are persisted to the central Redis instance configured
+    in the indexer config file.
 
-            dry_run_str = ' (dry run)' if kwargs['dry_run'] else ''
-            _ = (
-                    additional_inputs
-                    | 'CoGroup Additional Inputs' >> beam.CoGroupByKey()
-                    | 'Create Update Index Actions' >> beam.FlatMap(map_to_update_actions)
-                    | f'Index Additional Data{dry_run_str}' >> ElasticsearchBulkSink(
-                            get_config()['elasticsearch'],
-                            parallelism=index_parallelism,
-                            dry_run=kwargs['dry_run'])
-            )
+    Data will be stored under a key derived from the given ``--redis-prefix``, ``DATA_INDEX``
+    and the source document ID.
+    """
+
+    sys.argv[1:] = beam_args
+
+    if not spam_ranks and not page_ranks:
+        click.echo('At least one input source must be specified.')
+        sys.exit(1)
+
+    redis_prefix = _get_redis_lookup_prefix(redis_prefix, data_index)
+    redis_cfg = get_config()['redis']
+    if not redis_cfg:
+        click.echo('Redis host not configured.', err=True)
+        sys.exit(1)
+
+    click.echo(f'Preparing lookup data...')
+    start = monotonic()
+
+    with beam.Pipeline(options=_get_pipeline_options()) as pipeline:
+        if spam_ranks:
+            _ = (pipeline
+                 | 'Read Spam Ranks' >> textio.ReadFromText(
+                        spam_ranks, min_bundle_size=1)
+                 | 'Map Spam Ranks' >> beam.ParDo(map_val_id, val_type=int)
+                 | 'Serialize Spam Ranks' >> beam.Map(lambda e: (e[0], {'spam_rank': e[1]}))
+                 | 'Store Spam Ranks' >> AddToRedisHash(redis_cfg, redis_prefix))
+
+        if page_ranks:
+            _ = (pipeline
+                 | 'Read Page Ranks' >> textio.ReadFromText(
+                        page_ranks, min_bundle_size=1)
+                 | 'Map Page Ranks' >> beam.ParDo(map_id_val, val_type=float)
+                 | 'Serialize Page Ranks' >> beam.Map(lambda e: (e[0], {'page_rank': e[1]}))
+                 | 'Store Page Ranks' >> AddToRedisHash(redis_cfg, redis_prefix))
 
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
 

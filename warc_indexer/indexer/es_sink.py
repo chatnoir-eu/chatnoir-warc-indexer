@@ -36,8 +36,7 @@ class ElasticsearchBulkSink(beam.PTransform):
                  max_backoff=600,
                  request_timeout=240,
                  ignore_persistent_400=True,
-                 dry_run=False,
-                 retain_fields=None):
+                 dry_run=False):
         """
         Elasticsearch bulk indexing sink.
 
@@ -54,7 +53,6 @@ class ElasticsearchBulkSink(beam.PTransform):
         :param request_timeout: Elasticsearch request timeout
         :param ignore_persistent_400: ignore persistent ``RequestError``s, i.e., errors with HTTP code 400
         :param dry_run: discard documents and do not actually index them
-        :param retain_fields: instead of plain index IDs, map inputs to KV pairs retaining the specified index fields
         """
         super().__init__()
         self._bulk_sink = _ElasticsearchBulkSink(es_args=es_args,
@@ -66,8 +64,7 @@ class ElasticsearchBulkSink(beam.PTransform):
                                                  max_backoff=max_backoff,
                                                  request_timeout=request_timeout,
                                                  ignore_persistent_400=ignore_persistent_400,
-                                                 dry_run=dry_run,
-                                                 retain_fields=retain_fields)
+                                                 dry_run=dry_run)
         self.parallelism = parallelism
 
     def expand(self, pcoll):
@@ -95,8 +92,7 @@ class _ElasticsearchBulkSink(beam.DoFn):
                  max_backoff,
                  request_timeout,
                  ignore_persistent_400,
-                 dry_run,
-                 retain_fields):
+                 dry_run):
         super().__init__()
 
         self.buffer_size = buffer_size
@@ -118,7 +114,6 @@ class _ElasticsearchBulkSink(beam.DoFn):
         self.max_backoff = max_backoff
         self.ignore_persistent_400 = ignore_persistent_400
         self.dry_run = dry_run
-        self.retain_fields = set(retain_fields) if retain_fields else None
 
     def setup(self):
         self.client = Elasticsearch(**self.es_args)
@@ -140,11 +135,7 @@ class _ElasticsearchBulkSink(beam.DoFn):
         """
 
         if self.dry_run:
-            val = element.get('_id', '')
-            if self.retain_fields:
-                val = val, {k: v for k, v in element.items() if k in self.retain_fields}
-            yield val
-            return
+            yield element.get('_id', '')
 
         self.buffer.append((element, timestamp, window))
         if len(self.buffer) >= self.buffer_size:
@@ -173,11 +164,7 @@ class _ElasticsearchBulkSink(beam.DoFn):
                             to_retry.append(self.buffer[i])
                             errors.append(info)
                         else:
-                            val = list(info.values())[0]['_id']
-                            if self.retain_fields:
-                                val = val, {k: v for k, v in self.buffer[i][0].items() if k in self.retain_fields}
-
-                            yield WindowedValue(val, self.buffer[i][1], self.buffer[i][2])
+                            yield WindowedValue(list(info.values())[0]['_id'], self.buffer[i][1], self.buffer[i][2])
 
                     if not to_retry:
                         return

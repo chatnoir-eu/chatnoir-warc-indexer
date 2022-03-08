@@ -22,10 +22,10 @@ from urllib.parse import urlparse
 import uuid
 
 import apache_beam as beam
-import apache_beam.typehints.typehints as t
-
-from fastwarc import warc
 from apache_beam.metrics import Metrics
+import apache_beam.typehints.typehints as t
+from fastwarc import warc
+import redis
 from resiliparse.parse.encoding import bytes_to_str, detect_encoding, detect_mime
 from resiliparse.extract.html2text import extract_plain_text
 from resiliparse.parse.html import HTMLTree
@@ -51,17 +51,28 @@ class ProcessRecords(beam.PTransform):
                  data_index: str,
                  max_payload_size: int = MAX_DOCUMENT_SIZE,
                  always_index_meta: bool = False,
-                 trust_http_content_type: bool = False):
+                 trust_http_content_type: bool = False,
+                 redis_lookup_host=None,
+                 redis_prefix='WARC_Input_LOOKUP_'):
         """
         Process a collection of WARC records and turn them into Elasticsearch index actions.
         Returns two partitions of index action dicts, one for the meta index and one for the data index.
+
+        Additional per-document index data can be looked up during indexing from a configured Redis
+        instance. The document is expected to be found under a key consisting of the ``redis_prefix``
+        concatenated with the source document ID. The value is expected to be a hash that is to be
+        merged into the ``data_index`` documents.
 
         :param doc_id_prefix: document UUID prefix
         :param meta_index: meta index name (required for index action creation)
         :param data_index: data index name (required for index action creation)
         :param max_payload_size: maximum payload size to process in bytes
         :param always_index_meta: always index a document's metadata, even if the payload document is skipped
-        :param trust_http_content_type: unconditionally trust HTTP Content-Type, don't perform check for binary response
+        :param trust_http_content_type: unconditionally trust HTTP Content-Type, don't perform check for
+                                        binary response
+        :param redis_lookup_host: a dict with Redis host data that can be passed to construct a
+                                  :class:`redis.Redis` instance.
+        :param redis_prefix: Redis lookup key prefix
         """
         super().__init__()
         self.do_fn = ProcessRecord(doc_id_prefix=doc_id_prefix,
@@ -69,7 +80,9 @@ class ProcessRecords(beam.PTransform):
                                    data_index=data_index,
                                    max_payload_size=max_payload_size,
                                    always_index_meta=always_index_meta,
-                                   trust_http_content_type=trust_http_content_type)
+                                   trust_http_content_type=trust_http_content_type,
+                                   redis_lookup_host=redis_lookup_host,
+                                   redis_prefix=redis_prefix)
 
         self._partitions = [meta_index, data_index]
 
@@ -88,15 +101,30 @@ class ProcessRecord(beam.DoFn):
                  data_index: str,
                  max_payload_size: int = MAX_DOCUMENT_SIZE,
                  always_index_meta: bool = False,
-                 trust_http_content_type: bool = False):
+                 trust_http_content_type: bool = False,
+                 redis_lookup_host=None,
+                 redis_prefix='WARC_Input_LOOKUP_'):
         super().__init__()
+
         self.doc_id_prefix = doc_id_prefix
         self.meta_index = meta_index
         self.data_index = data_index
         self.always_index_meta = always_index_meta
-        self.counter = Metrics.counter(self.__class__, 'warc_record_counter')
         self.max_payload_size = max_payload_size
         self.trust_http_content_type = trust_http_content_type
+        self.redis_lookup_host = redis_lookup_host
+        self.redis_prefix = redis_prefix
+        self.redis_client = None    # type: redis.Redis
+
+        self.counter = Metrics.counter(self.__class__, 'warc_record_counter')
+
+    def setup(self):
+        if self.redis_lookup_host is not None:
+            self.redis_client = redis.Redis(**self.redis_lookup_host, decode_responses=True)
+
+    def teardown(self):
+        if self.redis_client is not None:
+            self.redis_client.close()
 
     # noinspection PyMethodOverriding
     def process(self, element: t.Tuple[str, warc.WarcRecord]) -> t.Iterable[t.KV[str, t.Dict[str, t.Any]]]:
@@ -145,6 +173,9 @@ class ProcessRecord(beam.DoFn):
                 raise SkipRecord(f'Document too short ({warc_record.content_length} bytes)')
 
             payload = self.create_payload(webis_id, meta, content_bytes)
+
+            if self.redis_client:
+                payload.update(self.redis_client.hgetall(self.redis_prefix + doc_id))
 
         except SkipRecord as reason:
             logger.debug('Skipping document %s, reason: %s', doc_id, reason)
@@ -471,3 +502,40 @@ def map_val_id(line, val_type=float) -> t.Optional[t.KV[str, t.Any]]:
         yield k, val_type(v)
     except ValueError:
         return
+
+
+# noinspection PyAbstractClass
+class AddToRedisHash(beam.PTransform):
+
+    def __init__(self, redis_host, redis_prefix=''):
+        """
+        Store keyed dict in a Redis hash.
+
+        :param redis_host: a dict with Redis host data that can be passed to construct a :class:`redis.Redis` instance.
+        :param redis_prefix: Redis key prefix
+        """
+        super().__init__()
+        self.do_fn = _AddToRedisSet(redis_host, redis_prefix)
+
+    def expand(self, pcoll):
+        return pcoll | beam.ParDo(self.do_fn)
+
+
+# noinspection PyAbstractClass
+class _AddToRedisSet(beam.DoFn):
+    def __init__(self, redis_host, redis_prefix):
+        super().__init__()
+        self.redis_host = redis_host
+        self.redis_prefix = redis_prefix
+        self.redis_client = None    # type: redis.Redis
+
+    def setup(self):
+        self.redis_client = redis.Redis(**self.redis_host)
+
+    def teardown(self):
+        self.redis_client.close()
+
+    def process(self, element: t.KV[str, t.Dict[str, t.Any]]):
+        k, v = element
+        for i, j in v.items():
+            self.redis_client.hset(self.redis_prefix + k, i, j)
