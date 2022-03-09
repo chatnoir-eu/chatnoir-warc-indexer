@@ -25,7 +25,6 @@ from apache_beam.io.filesystemio import DownloaderStream
 from apache_beam.io.filesystems import FileSystems
 from apache_beam.io.fileio import MatchFiles
 from apache_beam.io.restriction_trackers import OffsetRange, OffsetRestrictionTracker
-from apache_beam.options import pipeline_options
 from apache_beam.options.value_provider import RuntimeValueProvider
 import apache_beam.transforms.window as window
 
