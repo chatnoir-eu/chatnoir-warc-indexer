@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import os
 import sys
@@ -29,6 +30,7 @@ import click
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import TransportError
 from fastwarc.warc import WarcRecordType
+from tqdm import tqdm
 
 from warc_indexer.conf.config import get_config
 from warc_indexer.indexer.es_sink import ElasticsearchBulkSink, ensure_index
@@ -223,7 +225,7 @@ def prepare_lookups(data_index, beam_args, spam_ranks, page_ranks, redis_prefix)
                  | 'Read Spam Ranks' >> textio.ReadFromText(
                         spam_ranks, min_bundle_size=1)
                  | 'Map Spam Ranks' >> beam.ParDo(map_val_id, val_type=int)
-                 | 'Serialize Spam Ranks' >> beam.Map(lambda e: (e[0], {'spam_rank': e[1]}))
+                 | 'Serialize Spam Ranks' >> beam.Map(lambda e: (e[0], {'spam_rank': json.dumps(e[1])}))
                  | 'Store Spam Ranks' >> AddToRedisHash(redis_cfg, redis_prefix))
 
         if page_ranks:
@@ -231,7 +233,7 @@ def prepare_lookups(data_index, beam_args, spam_ranks, page_ranks, redis_prefix)
                  | 'Read Page Ranks' >> textio.ReadFromText(
                         page_ranks, min_bundle_size=1)
                  | 'Map Page Ranks' >> beam.ParDo(map_id_val, val_type=float)
-                 | 'Serialize Page Ranks' >> beam.Map(lambda e: (e[0], {'page_rank': e[1]}))
+                 | 'Serialize Page Ranks' >> beam.Map(lambda e: (e[0], {'page_rank': json.dumps(e[1])}))
                  | 'Store Page Ranks' >> AddToRedisHash(redis_cfg, redis_prefix))
 
     click.echo(f'Time taken: {monotonic() - start:.2f}s')
@@ -255,7 +257,7 @@ def clear_redis_cache(prefix, host, port):
 
     redis_client = redis.Redis(**cfg)
     count = 0
-    for k in redis_client.scan_iter(prefix + '*'):
+    for k in tqdm(redis_client.scan_iter(prefix + '*'), desc='Deleting cache entries', unit=' entries'):
         redis_client.delete(k)
         count += 1
     click.echo(f'Cleared {count} cache entries.')

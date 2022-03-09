@@ -16,6 +16,7 @@ from base64 import b64encode
 from calendar import monthrange
 from dateutil.parser import parse as date_parse
 from hashlib import blake2b
+import json
 import logging
 import re
 from urllib.parse import urlparse
@@ -60,8 +61,8 @@ class ProcessRecords(beam.PTransform):
 
         Additional per-document index data can be looked up during indexing from a configured Redis
         instance. The document is expected to be found under a key consisting of the ``redis_prefix``
-        concatenated with the source document ID. The value is expected to be a hash that is to be
-        merged into the ``data_index`` documents.
+        concatenated with the source document ID. The value is expected to be a hash with JSON-serialized
+        values that are to be merged into the ``data_index`` documents.
 
         :param doc_id_prefix: document UUID prefix
         :param meta_index: meta index name (required for index action creation)
@@ -175,7 +176,8 @@ class ProcessRecord(beam.DoFn):
             payload = self.create_payload(webis_id, meta, content_bytes)
 
             if self.redis_client:
-                payload.update(self.redis_client.hgetall(self.redis_prefix + doc_id))
+                payload.update({k: json.loads(v)
+                                for k, v in self.redis_client.hgetall(self.redis_prefix + doc_id).items()})
 
         except SkipRecord as reason:
             logger.debug('Skipping document %s, reason: %s', doc_id, reason)

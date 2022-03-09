@@ -14,6 +14,7 @@ setuptools.setup(
         'python-dateutil',
         'redis',
         'resiliparse',
+        'tqdm'
     ],
     packages=setuptools.find_packages(),
     entry_points={
