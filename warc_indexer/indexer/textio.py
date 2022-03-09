@@ -8,6 +8,7 @@ from apache_beam.io.restriction_trackers import OffsetRange, OffsetRestrictionTr
 
 
 DEFAULT_DESIRED_SPLIT_SIZE = 64 * 1024 * 1024  # 64 MiB
+DEFAULT_MIN_SPLIT_SIZE = 1024 * 1024  # 1 MiB
 
 
 class UnfusedReadFromText(beam.PTransform):
@@ -15,7 +16,7 @@ class UnfusedReadFromText(beam.PTransform):
                  file_pattern,
                  shuffle_names=False,
                  desired_split_size=DEFAULT_DESIRED_SPLIT_SIZE,
-                 min_split_size=1024,
+                 min_split_size=DEFAULT_MIN_SPLIT_SIZE,
                  compression_type=CompressionTypes.AUTO,
                  coder=coders.StrUtf8Coder()):
         """
