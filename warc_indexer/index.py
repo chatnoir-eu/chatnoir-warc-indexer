@@ -91,7 +91,7 @@ def _get_pipeline_options():
 
 
 def _get_redis_cache_prefix(base_prefix, idx_name):
-    return ''.join((base_prefix, idx_name, '_'))
+    return ''.join((base_prefix, idx_name, '_CACHE_'))
 
 
 def _get_redis_lookup_prefix(base_prefix, idx_name):
@@ -185,13 +185,13 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
 @main.command(context_settings=dict(
     ignore_unknown_options=True
 ))
-@click.argument('data-index')
+@click.argument('meta-index')
 @click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
 @click.option('--spam-ranks', help='File glob with spam ranks (ClueWeb format)')
 @click.option('--page-ranks', help='File glob with page ranks (ClueWeb format)')
 @click.option('--redis-prefix', help='Redis key prefix if WARC name caching is configured',
               default='ChatNoirIndexer_WARC_', show_default=True)
-def prepare_lookups(data_index, beam_args, spam_ranks, page_ranks, redis_prefix):
+def prepare_lookups(meta_index, beam_args, spam_ranks, page_ranks, redis_prefix):
     """
     Prepare additional data to be fed into an indexing job and persist them to Redis.
 
@@ -210,7 +210,7 @@ def prepare_lookups(data_index, beam_args, spam_ranks, page_ranks, redis_prefix)
         click.echo('At least one input source must be specified.')
         sys.exit(1)
 
-    redis_prefix = _get_redis_lookup_prefix(redis_prefix, data_index)
+    redis_prefix = _get_redis_lookup_prefix(redis_prefix, meta_index)
     redis_cfg = get_config()['redis']
     if not redis_cfg:
         click.echo('Redis host not configured.', err=True)
@@ -240,11 +240,15 @@ def prepare_lookups(data_index, beam_args, spam_ranks, page_ranks, redis_prefix)
 
 
 @main.command()
-@click.option('--prefix', help='Redis key prefix to delete', default='ChatNoirIndexer_WARC_', show_default=True)
+@click.argument('meta-index')
+@click.option('--delete', type=click.Choice(['cache', 'lookup', 'all']), help='What to delete',
+              default='cache', show_default=True)
+@click.option('--prefix', help='Redis key base prefix to delete', default='ChatNoirIndexer_WARC_', show_default=True)
 @click.option('--host', help='Override Redis host')
 @click.option('--port', help='Override Redis port')
-def clear_redis_cache(prefix, host, port):
-    """Clear all WARC entries with the configured prefix from the Redis cache."""
+@click.option('--batch-size', help='Scan batch size', type=int, default=500, show_default=True)
+def clear_redis(meta_index, delete, prefix, host, port, batch_size):
+    """Clear all WARC entries with the configured prefix and index name from the Redis cache."""
     cfg = get_config().get('redis')
     if not cfg:
         click.echo('Redis host not configured.', err=True)
@@ -255,11 +259,23 @@ def clear_redis_cache(prefix, host, port):
     if port:
         cfg['port'] = port
 
+    if delete == 'cache':
+        prefix = _get_redis_cache_prefix(prefix, meta_index)
+    elif delete == 'lookup':
+        prefix = _get_redis_lookup_prefix(prefix, meta_index)
+    else:
+        ''.join((prefix, meta_index))
+
     redis_client = redis.Redis(**cfg)
     count = 0
-    for k in tqdm(redis_client.scan_iter(prefix + '*'), desc='Deleting cache entries', unit=' entries'):
-        redis_client.delete(k)
-        count += 1
+    cursor = -1
+    with tqdm(desc='Deleting cache entries', unit=' entries', leave=False) as prog:
+        while cursor != 0:
+            cursor, keys = redis_client.scan(cursor=max(0, cursor), match=prefix + '*', count=batch_size)
+            if keys:
+                prog.update(len(keys))
+                count += len(keys)
+                redis_client.delete(*keys)
     click.echo(f'Cleared {count} cache entries.')
 
 
