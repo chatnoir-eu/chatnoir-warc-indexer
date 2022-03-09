@@ -509,15 +509,16 @@ def map_val_id(line, val_type=float) -> t.Optional[t.KV[str, t.Any]]:
 # noinspection PyAbstractClass
 class AddToRedisHash(beam.PTransform):
 
-    def __init__(self, redis_host, redis_prefix=''):
+    def __init__(self, redis_host, redis_prefix='', pipeline_size=500):
         """
         Store keyed dict in a Redis hash.
 
         :param redis_host: a dict with Redis host data that can be passed to construct a :class:`redis.Redis` instance.
         :param redis_prefix: Redis key prefix
+        :param pipeline_size: pipeline buffer size for batching commands
         """
         super().__init__()
-        self.do_fn = _AddToRedisSet(redis_host, redis_prefix)
+        self.do_fn = _AddToRedisSet(redis_host, redis_prefix, pipeline_size)
 
     def expand(self, pcoll):
         return pcoll | beam.ParDo(self.do_fn)
@@ -525,19 +526,29 @@ class AddToRedisHash(beam.PTransform):
 
 # noinspection PyAbstractClass
 class _AddToRedisSet(beam.DoFn):
-    def __init__(self, redis_host, redis_prefix):
+    def __init__(self, redis_host, redis_prefix, pipeline_size):
         super().__init__()
         self.redis_host = redis_host
         self.redis_prefix = redis_prefix
         self.redis_client = None    # type: redis.Redis
+        self.pipeline = None        # type: redis.client.Pipeline
+        self.pipeline_size = pipeline_size
 
     def setup(self):
         self.redis_client = redis.Redis(**self.redis_host)
+        self.pipeline = self.redis_client.pipeline(transaction=False)
 
     def teardown(self):
         self.redis_client.close()
 
+    def finish_bundle(self):
+        if len(self.pipeline) > 0:
+            self.pipeline.execute()
+
     def process(self, element: t.KV[str, t.Dict[str, t.Any]]):
         k, v = element
         for i, j in v.items():
-            self.redis_client.hset(self.redis_prefix + k, i, j)
+            self.pipeline.hset(self.redis_prefix + k, i, j)
+
+        if len(self.pipeline) > self.pipeline_size:
+            self.pipeline.execute()
