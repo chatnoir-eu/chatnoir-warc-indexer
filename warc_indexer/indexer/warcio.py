@@ -44,7 +44,7 @@ except ModuleNotFoundError:
 logger = logging.getLogger()
 
 
-class WarcInput(beam.PTransform):
+class ReadWarcs(beam.PTransform):
     def __init__(self, file_pattern, warc_args=None, freeze=True, overly_long_keep_meta=False,
                  redis_host=None, redis_prefix='WARC_Input_'):
         """
@@ -64,7 +64,7 @@ class WarcInput(beam.PTransform):
         """
         super().__init__()
         self._file_matcher = MatchFiles(file_pattern)
-        self._warc_reader = _WarcReader(warc_args, freeze, overly_long_keep_meta, redis_host, redis_prefix)
+        self._warc_reader = _ReadWarc(warc_args, freeze, overly_long_keep_meta, redis_host, redis_prefix)
 
     def expand(self, pcoll):
         return pcoll | self._file_matcher | beam.Reshuffle() | beam.ParDo(self._warc_reader)
@@ -82,7 +82,7 @@ class _WarcRestrictionProvider(beam.transforms.core.RestrictionProvider):
 
 
 # noinspection PyAbstractClass
-class _WarcReader(beam.DoFn):
+class _ReadWarc(beam.DoFn):
     """
     WARC file input source.
     """

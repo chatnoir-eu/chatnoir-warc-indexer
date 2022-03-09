@@ -35,7 +35,7 @@ from tqdm import tqdm
 from warc_indexer.conf.config import get_config
 from warc_indexer.indexer.es_sink import ElasticsearchBulkSink, ensure_index
 from warc_indexer.indexer.process import ProcessRecords, AddToRedisHash, map_id_val, map_val_id
-from warc_indexer.indexer.warc_source import WarcInput
+from warc_indexer.indexer.warcio import ReadWarcs
 
 
 logger = logging.getLogger()
@@ -156,7 +156,7 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
         # Index main metadata and payload documents
         meta, payload = (
                 pipeline
-                | 'Iterate WARCs' >> WarcInput(input_glob,
+                | 'Iterate WARCs' >> ReadWarcs(input_glob,
                                                warc_args=warc_args,
                                                freeze=True,
                                                overly_long_keep_meta=kwargs['always_index_meta'],
