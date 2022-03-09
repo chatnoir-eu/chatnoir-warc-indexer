@@ -23,7 +23,6 @@ import uuid
 import redis
 
 import apache_beam as beam
-from apache_beam.io import textio
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.transforms import window
 import click
@@ -36,6 +35,7 @@ from warc_indexer.conf.config import get_config
 from warc_indexer.indexer.es_sink import ElasticsearchBulkSink, ensure_index
 from warc_indexer.indexer.process import ProcessRecords, AddToRedisHash, map_id_val, map_val_id
 from warc_indexer.indexer.warcio import ReadWarcs
+from warc_indexer.indexer.textio import UnfusedReadFromText
 
 
 logger = logging.getLogger()
@@ -222,16 +222,14 @@ def prepare_lookups(meta_index, beam_args, spam_ranks, page_ranks, redis_prefix)
     with beam.Pipeline(options=_get_pipeline_options()) as pipeline:
         if spam_ranks:
             _ = (pipeline
-                 | 'Read Spam Ranks' >> textio.ReadFromText(
-                        spam_ranks, min_bundle_size=1)
+                 | 'Read Spam Ranks' >> UnfusedReadFromText(spam_ranks)
                  | 'Map Spam Ranks' >> beam.ParDo(map_val_id, val_type=int)
                  | 'Serialize Spam Ranks' >> beam.Map(lambda e: (e[0], {'spam_rank': json.dumps(e[1])}))
                  | 'Store Spam Ranks' >> AddToRedisHash(redis_cfg, redis_prefix))
 
         if page_ranks:
             _ = (pipeline
-                 | 'Read Page Ranks' >> textio.ReadFromText(
-                        page_ranks, min_bundle_size=1)
+                 | 'Read Page Ranks' >> UnfusedReadFromText(page_ranks)
                  | 'Map Page Ranks' >> beam.ParDo(map_id_val, val_type=float)
                  | 'Serialize Page Ranks' >> beam.Map(lambda e: (e[0], {'page_rank': json.dumps(e[1])}))
                  | 'Store Page Ranks' >> AddToRedisHash(redis_cfg, redis_prefix))
