@@ -107,6 +107,7 @@ def _get_redis_lookup_prefix(base_prefix, idx_name):
 @click.argument('id-prefix')
 @click.argument('beam-args', nargs=-1, type=click.UNPROCESSED)
 @click.option('-l', '--with-lookup', help='Look up additional pre-indexed data from Redis', is_flag=True)
+@click.option('--skip-processed', help='Skip previously processed WARCs if found in Redis cache', is_flag=True)
 @click.option('-p', '--index-parallelism', type=int,
               help='Indexing parallelism (same as processing parallelism if unset, will cause a reshuffle)')
 @click.option('-s', '--max-content-length', type=int, default=1024 * 1024, show_default=True,
@@ -142,8 +143,9 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
         max_content_length=kwargs['max_content_length']
     )
     redis_cache_prefix = _get_redis_cache_prefix(kwargs['redis_prefix'], meta_index)
+    redis_cache_host = get_config().get('redis') if kwargs['skip_processed'] else None
     redis_lookup_prefix = _get_redis_lookup_prefix(kwargs['redis_prefix'], data_index)
-    redis_lookup_host = get_config().get('redis') if kwargs['with-lookup'] else None
+    redis_lookup_host = get_config().get('redis') if kwargs['with_lookup'] else None
 
     click.echo(f'Starting pipeline to index "{input_glob}"...')
     start = monotonic()
@@ -160,7 +162,7 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
                                                warc_args=warc_args,
                                                freeze=True,
                                                overly_long_keep_meta=kwargs['always_index_meta'],
-                                               redis_host=get_config().get('redis'),
+                                               redis_host=redis_cache_host,
                                                redis_prefix=redis_cache_prefix)
                 | beam.WindowInto(window.FixedWindows(30))
                 | 'Process Records' >> ProcessRecords(id_prefix, meta_index, data_index,
