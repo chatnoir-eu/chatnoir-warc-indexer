@@ -143,14 +143,14 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
         max_content_length=kwargs['max_content_length']
     )
     redis_cache_prefix = _get_redis_cache_prefix(kwargs['redis_prefix'], meta_index)
-    redis_cache_host = get_config().get('redis') if kwargs['skip_processed'] else None
+    redis_cache_host = get_config().get('redis') if kwargs['skip_processed'] and not kwargs['dry_run'] else None
     redis_lookup_prefix = _get_redis_lookup_prefix(kwargs['redis_prefix'], data_index)
     redis_lookup_host = get_config().get('redis') if kwargs['with_lookup'] else None
 
     click.echo(f'Starting pipeline to index "{input_glob}"...')
     start = monotonic()
 
-    if kwargs['with-lookup'] and not get_config()['redis']:
+    if kwargs['with_lookup'] and not get_config()['redis']:
         click.echo('Redis host not configured', err=True)
         sys.exit(1)
 

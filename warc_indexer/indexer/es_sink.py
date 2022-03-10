@@ -124,7 +124,7 @@ class _ElasticsearchBulkSink(beam.DoFn):
             self.client.transport.close()
 
     # noinspection PyIncorrectDocstring
-    def process(self, element, *args, timestamp=beam.DoFn.TimestampParam, window=beam.DoFn.WindowParam, **kwargs):
+    def process(self, element, timestamp=beam.DoFn.TimestampParam, window=beam.DoFn.WindowParam):
         """
         Add element to index buffer.
         Returns an iterable of successfully index document IDs on buffer flush or ``None`` otherwise.
@@ -143,9 +143,13 @@ class _ElasticsearchBulkSink(beam.DoFn):
 
     def finish_bundle(self):
         if len(self.buffer) > 0:
-            yield from self._flush_buffer()
+            yield from self._flush_buffer(window_values=True)
 
-    def _flush_buffer(self):
+    def _flush_buffer(self, window_values=False):
+        if self.dry_run:
+            self.buffer.clear()
+            return
+
         retry = 0
         errors = []
         self.buffer.sort(key=lambda x: x[0].get('_id', ''))
@@ -164,7 +168,11 @@ class _ElasticsearchBulkSink(beam.DoFn):
                             to_retry.append(self.buffer[i])
                             errors.append(info)
                         else:
-                            yield WindowedValue(list(info.values())[0]['_id'], self.buffer[i][1], self.buffer[i][2])
+                            val = list(info.values())[0]['_id']
+                            if window_values:
+                                yield WindowedValue(val, self.buffer[i][1], [self.buffer[i][2]])
+                            else:
+                                yield val
 
                     if not to_retry:
                         return
