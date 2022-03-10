@@ -17,10 +17,17 @@ CONFIG = dict(
     ),
 
     # Redis WARC name cache opts
-    # redis=dict(
+    # redis_cache=dict(
     #     host='localhost',
     #     port=6379,
-    #     password=None
+    #     password=None,
+    #     db=0,
+    # ),
+    # redis_lookup=dict(
+    #     host='localhost',
+    #     port=6379,
+    #     password=None,
+    #     db=1,
     # )
 )
 

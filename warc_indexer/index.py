@@ -135,6 +135,7 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
 
     sys.argv[1:] = beam_args
     options = _get_pipeline_options()
+    dry_run = kwargs['dry_run']
 
     index_parallelism = min(1, kwargs['index_parallelism'] // 2) if kwargs['index_parallelism'] else None
     warc_args = dict(
@@ -143,17 +144,20 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
         max_content_length=kwargs['max_content_length']
     )
     redis_cache_prefix = _get_redis_cache_prefix(kwargs['redis_prefix'], meta_index)
-    redis_cache_host = get_config().get('redis') if kwargs['skip_processed'] and not kwargs['dry_run'] else None
-    redis_lookup_prefix = _get_redis_lookup_prefix(kwargs['redis_prefix'], data_index)
-    redis_lookup_host = get_config().get('redis') if kwargs['with_lookup'] else None
-
-    click.echo(f'Starting pipeline to index "{input_glob}"...')
-    start = monotonic()
-
-    if kwargs['with_lookup'] and not get_config()['redis']:
-        click.echo('Redis host not configured', err=True)
+    redis_cache_host = get_config().get('redis_cache') if kwargs['skip_processed'] else None
+    if kwargs['skip_processed'] and not redis_cache_host:
+        click.echo('Redis cache host not configured', err=True)
         sys.exit(1)
 
+    redis_lookup_prefix = _get_redis_lookup_prefix(kwargs['redis_prefix'], data_index)
+    redis_lookup_host = get_config().get('redis_lookup') if kwargs['with_lookup'] else None
+    if kwargs['with_lookup'] and not redis_lookup_host:
+        click.echo('Redis lookup host not configured', err=True)
+        sys.exit(1)
+
+    dry_run_str = ' (DRY RUN)' if dry_run else ''
+    click.echo(f'Starting pipeline to index "{input_glob}"{dry_run_str}...')
+    start = monotonic()
     with beam.Pipeline(options=options) as pipeline:
         # Index main metadata and payload documents
         meta, payload = (
@@ -162,7 +166,7 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
                                                warc_args=warc_args,
                                                freeze=True,
                                                overly_long_keep_meta=kwargs['always_index_meta'],
-                                               redis_host=redis_cache_host,
+                                               redis_host=redis_cache_host if not dry_run else None,
                                                redis_prefix=redis_cache_prefix)
                 | beam.WindowInto(window.FixedWindows(30))
                 | 'Process Records' >> ProcessRecords(id_prefix, meta_index, data_index,
@@ -172,9 +176,6 @@ def index(input_glob, meta_index, data_index, id_prefix, beam_args, **kwargs):
                                                       redis_lookup_host=redis_lookup_host,
                                                       redis_prefix=redis_lookup_prefix)
         )
-
-        dry_run = kwargs['dry_run'] or kwargs['additional_only']
-        dry_run_str = ' (dry run)' if dry_run else ''
 
         meta |= f'Index Meta Records{dry_run_str}' >> ElasticsearchBulkSink(
             get_config()['elasticsearch'], parallelism=index_parallelism, dry_run=dry_run)
@@ -213,7 +214,7 @@ def prepare_lookups(meta_index, beam_args, spam_ranks, page_ranks, redis_prefix)
         sys.exit(1)
 
     redis_prefix = _get_redis_lookup_prefix(redis_prefix, meta_index)
-    redis_cfg = get_config()['redis']
+    redis_cfg = get_config().get('redis_lookup')
     if not redis_cfg:
         click.echo('Redis host not configured.', err=True)
         sys.exit(1)
@@ -241,7 +242,7 @@ def prepare_lookups(meta_index, beam_args, spam_ranks, page_ranks, redis_prefix)
 
 @main.command()
 @click.argument('meta-index')
-@click.option('--delete', type=click.Choice(['cache', 'lookup', 'all']), help='What to delete',
+@click.option('--delete', type=click.Choice(['cache', 'lookup']), help='What to delete',
               default='cache', show_default=True)
 @click.option('--prefix', help='Redis key base prefix to delete', default='ChatNoirIndexer_WARC_', show_default=True)
 @click.option('--host', help='Override Redis host')
@@ -249,7 +250,7 @@ def prepare_lookups(meta_index, beam_args, spam_ranks, page_ranks, redis_prefix)
 @click.option('--batch-size', help='Scan batch size', type=int, default=500, show_default=True)
 def clear_redis(meta_index, delete, prefix, host, port, batch_size):
     """Clear all WARC entries with the configured prefix and index name from the Redis cache."""
-    cfg = get_config().get('redis')
+    cfg = get_config().get('redis_' + delete)
     if not cfg:
         click.echo('Redis host not configured.', err=True)
         return
