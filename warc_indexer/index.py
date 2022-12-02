@@ -207,6 +207,8 @@ def prepare_lookups(meta_index, beam_args, spam_ranks, page_ranks, redis_prefix)
     and the source document ID.
     """
 
+    # TODO: Replace Redis with something else that scales better
+
     sys.argv[1:] = beam_args
 
     if not spam_ranks and not page_ranks:
